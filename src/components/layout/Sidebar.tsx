@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { BarChart3, Package, ShoppingCart, Warehouse, RefreshCw, LogOut, Settings, X, PieChart, Bell } from "lucide-react";
+import { BarChart3, Package, ShoppingCart, Warehouse, RefreshCw, LogOut, Settings, X, PieChart, Bell, FileText, Calculator } from "lucide-react";
 import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
 
@@ -12,6 +12,8 @@ const nav = [
   { name: "Товары", href: "/products", icon: Package },
   { name: "Продажи", href: "/sales", icon: ShoppingCart },
   { name: "Остатки", href: "/inventory", icon: Warehouse },
+  { name: "P&L Отч\u0451т", href: "/analytics/pnl", icon: FileText },
+  { name: "Юнит-экономика", href: "/analytics/unit-economics", icon: Calculator },
   { name: "ABC-анализ", href: "/analytics/abc", icon: PieChart },
   { name: "Синхронизация", href: "/sync", icon: RefreshCw },
   { name: "Уведомления", href: "/notifications", icon: Bell },
@@ -45,10 +47,7 @@ export default function Sidebar({ onClose }: SidebarProps) {
           <p className="text-[11px] text-text-tertiary mt-0.5 tracking-wide uppercase">Analytics</p>
         </Link>
         {onClose && (
-          <button
-            onClick={onClose}
-            className="lg:hidden p-1.5 rounded-lg text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors"
-          >
+          <button onClick={onClose} className="lg:hidden p-1.5 rounded-lg text-text-tertiary hover:text-text-primary hover:bg-surface-2 transition-colors">
             <X className="h-4 w-4" />
           </button>
         )}

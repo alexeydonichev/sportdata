@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import MetricCard from "@/components/ui/MetricCard";
 import PeriodSelector from "@/components/ui/PeriodSelector";
+import CategoryFilter from "@/components/ui/CategoryFilter";
 import MarketplaceBreakdown from "@/components/dashboard/MarketplaceBreakdown";
 import TopProducts from "@/components/dashboard/TopProducts";
 import RevenueChart from "@/components/dashboard/RevenueChart";
@@ -15,14 +16,17 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [period, setPeriod] = useState("7d");
+  const [category, setCategory] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  async function loadData(p: string) {
+  async function loadData(p: string, cat: string) {
     try {
+      const qs = new URLSearchParams({ period: p });
+      if (cat) qs.set("category", cat);
       const [d, chart] = await Promise.all([
-        api.dashboard(p),
-        api.chartData(p),
+        api.request<DashboardData>("/api/v1/dashboard?" + qs.toString()),
+        api.request<ChartDataPoint[]>("/api/v1/dashboard/chart?" + qs.toString()),
       ]);
       setData(d);
       setChartData(chart);
@@ -36,12 +40,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setLoading(true);
-    loadData(period);
-  }, [period]);
+    loadData(period, category);
+  }, [period, category]);
 
   function handleRefresh() {
     setRefreshing(true);
-    loadData(period);
+    loadData(period, category);
   }
 
   const c = data?.changes;
@@ -56,6 +60,7 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <CategoryFilter value={category} onChange={setCategory} />
           <PeriodSelector value={period} onChange={setPeriod} />
           <ThemeToggle />
           <button onClick={handleRefresh} disabled={refreshing}
@@ -77,9 +82,7 @@ export default function DashboardPage() {
             <MetricCard label="Продано" value={formatNumber(data.total_quantity)} change={c?.quantity} subtitle={formatNumber(data.total_sku) + " SKU"} />
             <MetricCard label="Средний чек" value={formatMoney(data.avg_order_value)} change={c?.avg_order} />
           </div>
-
           <RevenueChart data={chartData} />
-
           <div className="grid grid-cols-2 gap-4">
             <MetricCard label="Комиссии МП" value={formatMoney(data.total_commission)} change={c?.commission} invertColor />
             <MetricCard label="Логистика" value={formatMoney(data.total_logistics)} change={c?.logistics} invertColor />
