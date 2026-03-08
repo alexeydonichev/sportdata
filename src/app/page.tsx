@@ -1,52 +1,38 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import MetricCard from "@/components/ui/MetricCard";
 import PeriodSelector from "@/components/ui/PeriodSelector";
 import CategoryFilter from "@/components/ui/CategoryFilter";
+import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
 import MarketplaceBreakdown from "@/components/dashboard/MarketplaceBreakdown";
 import TopProducts from "@/components/dashboard/TopProducts";
 import RevenueChart from "@/components/dashboard/RevenueChart";
 import ThemeToggle from "@/components/ui/ThemeToggle";
-import { api, DashboardData, ChartDataPoint } from "@/lib/api";
+import Spinner from "@/components/ui/Spinner";
+import ErrorState from "@/components/ui/ErrorState";
+import { api } from "@/lib/api";
+import { useApiQuery } from "@/hooks/useApiQuery";
+import type { DashboardData, ChartDataPoint } from "@/types/models";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/utils";
 import { RefreshCw } from "lucide-react";
 
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
   const [period, setPeriod] = useState("7d");
   const [category, setCategory] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [marketplace, setMarketplace] = useState("all");
 
-  async function loadData(p: string, cat: string) {
-    try {
-      const qs = new URLSearchParams({ period: p });
-      if (cat) qs.set("category", cat);
-      const [d, chart] = await Promise.all([
-        api.request<DashboardData>("/api/v1/dashboard?" + qs.toString()),
-        api.request<ChartDataPoint[]>("/api/v1/dashboard/chart?" + qs.toString()),
-      ]);
-      setData(d);
-      setChartData(chart);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
+  const qs = new URLSearchParams({ period });
+  if (category && category !== "all") qs.set("category", category);
+  if (marketplace && marketplace !== "all") qs.set("marketplace", marketplace);
+  const query = qs.toString();
 
-  useEffect(() => {
-    setLoading(true);
-    loadData(period, category);
-  }, [period, category]);
-
-  function handleRefresh() {
-    setRefreshing(true);
-    loadData(period, category);
-  }
+  const { data, loading, error, refresh, refreshing } = useApiQuery<DashboardData>(
+    () => api.request("/api/v1/dashboard?" + query), [query]
+  );
+  const { data: chartData } = useApiQuery<ChartDataPoint[]>(
+    () => api.request("/api/v1/dashboard/chart?" + query), [query]
+  );
 
   const c = data?.changes;
 
@@ -60,21 +46,21 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <CategoryFilter value={category} onChange={setCategory} />
           <PeriodSelector value={period} onChange={setPeriod} />
           <ThemeToggle />
-          <button onClick={handleRefresh} disabled={refreshing}
+          <button onClick={refresh} disabled={refreshing}
             className="rounded-lg border border-border-default bg-surface-1 p-2 text-text-secondary hover:text-text-primary hover:border-border-strong transition-colors disabled:opacity-50">
             <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} strokeWidth={1.5} />
           </button>
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="h-5 w-5 border-2 border-border-default border-t-text-primary rounded-full animate-spin" />
-        </div>
-      ) : data ? (
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
+        <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
+        <CategoryFilter value={category} onChange={setCategory} />
+      </div>
+
+      {loading ? <Spinner /> : error ? <ErrorState message={error} onRetry={refresh} /> : data ? (
         <div className="space-y-6 animate-fade-in">
           <div className="grid grid-cols-4 gap-4">
             <MetricCard label="Выручка" value={formatMoney(data.total_revenue)} change={c?.revenue} subtitle={formatNumber(data.total_orders) + " заказов"} />
@@ -82,7 +68,7 @@ export default function DashboardPage() {
             <MetricCard label="Продано" value={formatNumber(data.total_quantity)} change={c?.quantity} subtitle={formatNumber(data.total_sku) + " SKU"} />
             <MetricCard label="Средний чек" value={formatMoney(data.avg_order_value)} change={c?.avg_order} />
           </div>
-          <RevenueChart data={chartData} />
+          {chartData && <RevenueChart data={chartData} />}
           <div className="grid grid-cols-2 gap-4">
             <MetricCard label="Комиссии МП" value={formatMoney(data.total_commission)} change={c?.commission} invertColor />
             <MetricCard label="Логистика" value={formatMoney(data.total_logistics)} change={c?.logistics} invertColor />
@@ -92,9 +78,7 @@ export default function DashboardPage() {
             <TopProducts data={data.top_products} />
           </div>
         </div>
-      ) : (
-        <div className="text-center py-20 text-text-tertiary">Не удалось загрузить данные</div>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

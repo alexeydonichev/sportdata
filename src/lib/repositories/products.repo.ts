@@ -1,10 +1,6 @@
 import pool from "@/lib/db";
 import type { ProductListItem, ABCProduct, Category } from "@/types/models";
 
-// ============================================================
-// Products Repository
-// ============================================================
-
 const ALLOWED_SORTS: Record<string, string> = {
   revenue: "revenue",
   profit: "profit",
@@ -17,26 +13,24 @@ const ALLOWED_SORTS: Record<string, string> = {
 
 interface ProductQueryParams {
   category?: string;
+  marketplace?: string;
   search?: string;
   sort?: string;
   order?: "asc" | "desc";
   salesDays?: number;
 }
 
-/**
- * Список товаров с метриками
- */
 export async function getProducts(
   params: ProductQueryParams = {}
 ): Promise<ProductListItem[]> {
-  const { category, search, sort = "revenue", order = "desc" } = params;
+  const { category, marketplace, search, sort = "revenue", order = "desc" } = params;
   const salesDays = params.salesDays || 90;
+  const hasMp = !!(marketplace && marketplace !== "all");
 
   const conditions: string[] = [];
   const queryParams: (string | number)[] = [];
   let idx = 0;
 
-  // Период для подзапроса sales
   idx++;
   queryParams.push(salesDays);
 
@@ -52,9 +46,17 @@ export async function getProducts(
     queryParams.push(`%${search}%`);
   }
 
+  let salesMpFilter = "";
+  if (hasMp) {
+    idx++;
+    queryParams.push(marketplace!);
+    salesMpFilter = `AND s_inner.marketplace_id = (SELECT id FROM marketplaces WHERE slug = $${idx})`;
+  }
+
   const where = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
   const sortCol = ALLOWED_SORTS[sort] || "revenue";
   const sortDir = order === "asc" ? "ASC" : "DESC";
+  const salesJoinType = hasMp ? "JOIN" : "LEFT JOIN";
 
   const { rows } = await pool.query(
     `SELECT
@@ -84,15 +86,16 @@ export async function getProducts(
       END AS return_pct
     FROM products p
     JOIN categories c ON c.id = p.category_id
-    LEFT JOIN (
-      SELECT product_id,
-        SUM(revenue) AS revenue,
-        SUM(net_profit) AS profit,
-        SUM(quantity) AS quantity,
+    ${salesJoinType} (
+      SELECT s_inner.product_id,
+        SUM(s_inner.revenue) AS revenue,
+        SUM(s_inner.net_profit) AS profit,
+        SUM(s_inner.quantity) AS quantity,
         COUNT(*) AS orders
-      FROM sales
-      WHERE sale_date >= CURRENT_DATE - $1::int
-      GROUP BY product_id
+      FROM sales s_inner
+      WHERE s_inner.sale_date >= CURRENT_DATE - $1::int
+      ${salesMpFilter}
+      GROUP BY s_inner.product_id
     ) s ON s.product_id = p.id
     LEFT JOIN (
       SELECT product_id, SUM(quantity) AS total_stock
@@ -110,10 +113,18 @@ export async function getProducts(
   return rows as ProductListItem[];
 }
 
-/**
- * Товары для ABC-анализа
- */
-export async function getProductsForABC(days: number): Promise<ABCProduct[]> {
+export async function getProductsForABC(days: number, marketplace?: string): Promise<ABCProduct[]> {
+  const params: (string | number)[] = [days];
+  const hasMp = !!(marketplace && marketplace !== "all");
+  let mpFilter = "";
+
+  if (hasMp) {
+    params.push(marketplace!);
+    mpFilter = `AND s_inner.marketplace_id = (SELECT id FROM marketplaces WHERE slug = $2)`;
+  }
+
+  const salesJoinType = hasMp ? "JOIN" : "LEFT JOIN";
+
   const { rows } = await pool.query(
     `SELECT
       p.id::text AS id,
@@ -126,25 +137,23 @@ export async function getProductsForABC(days: number): Promise<ABCProduct[]> {
       COALESCE(s.orders, 0)::int AS orders
     FROM products p
     JOIN categories c ON c.id = p.category_id
-    LEFT JOIN (
-      SELECT product_id,
-        SUM(revenue) AS revenue,
-        SUM(net_profit) AS profit,
-        SUM(quantity) AS quantity,
+    ${salesJoinType} (
+      SELECT s_inner.product_id,
+        SUM(s_inner.revenue) AS revenue,
+        SUM(s_inner.net_profit) AS profit,
+        SUM(s_inner.quantity) AS quantity,
         COUNT(*) AS orders
-      FROM sales
-      WHERE sale_date >= CURRENT_DATE - $1::int
-      GROUP BY product_id
+      FROM sales s_inner
+      WHERE s_inner.sale_date >= CURRENT_DATE - $1::int
+      ${mpFilter}
+      GROUP BY s_inner.product_id
     ) s ON s.product_id = p.id
     ORDER BY revenue DESC NULLS LAST`,
-    [days]
+    params
   );
   return rows as ABCProduct[];
 }
 
-/**
- * Категории с кол-вом товаров и выручкой
- */
 export async function getCategories(): Promise<Category[]> {
   const { rows } = await pool.query(`
     SELECT

@@ -3,11 +3,14 @@ import { PERIOD_DAYS, type PeriodKey } from "@/types/models";
 import { dashboardRepo } from "@/lib/repositories";
 
 export async function GET(req: NextRequest) {
-  const period = (req.nextUrl.searchParams.get("period") || "7d") as PeriodKey;
+  const sp = req.nextUrl.searchParams;
+  const period = (sp.get("period") || "7d") as PeriodKey;
   const days = PERIOD_DAYS[period] || 7;
+  const category = sp.get("category") || undefined;
+  const marketplace = sp.get("marketplace") || undefined;
 
   try {
-    const data = await dashboardRepo.getChart(days);
+    const data = await dashboardRepo.getChart(days, category, marketplace);
     return NextResponse.json(data);
   } catch (e: unknown) {
     console.error("Chart error:", e);

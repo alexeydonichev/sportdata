@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import PeriodSelector from "@/components/ui/PeriodSelector";
 import CategoryFilter from "@/components/ui/CategoryFilter";
+import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
+import ExportButton from "@/components/ui/ExportButton";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { ArrowUpDown, ChevronDown, ChevronUp } from "lucide-react";
@@ -27,52 +29,96 @@ interface UEData {
 }
 
 function SortHeader({ label, field, current, order, onSort }: {
-  label: string; field: string; current: string; order: string; onSort: (f: string) => void;
+  label: string; field: string; current: string; order: string;
+  onSort: (f: string) => void;
 }) {
   const active = current === field;
   return (
-    <th className="pb-3 font-medium text-right cursor-pointer select-none hover:text-text-primary transition-colors" onClick={() => onSort(field)}>
+    <th
+      className="pb-3 font-medium text-right cursor-pointer select-none hover:text-text-primary transition-colors"
+      onClick={() => onSort(field)}
+    >
       <span className="inline-flex items-center gap-1">
         {label}
-        {active ? (order === "desc" ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />) : <ArrowUpDown className="h-3 w-3 opacity-30" />}
+        {active ? (
+          order === "desc" ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronUp className="h-3 w-3" />
+          )
+        ) : (
+          <ArrowUpDown className="h-3 w-3 opacity-30" />
+        )}
       </span>
     </th>
   );
 }
+
 export default function UnitEconomicsPage() {
   const [data, setData] = useState<UEData | null>(null);
   const [period, setPeriod] = useState("30d");
   const [category, setCategory] = useState("");
+  const [marketplace, setMarketplace] = useState("all");
   const [sort, setSort] = useState("revenue");
   const [order, setOrder] = useState("desc");
   const [loading, setLoading] = useState(true);
 
   function handleSort(field: string) {
-    if (sort === field) { setOrder(order === "desc" ? "asc" : "desc"); }
-    else { setSort(field); setOrder("desc"); }
+    if (sort === field) {
+      setOrder(order === "desc" ? "asc" : "desc");
+    } else {
+      setSort(field);
+      setOrder("desc");
+    }
   }
 
   useEffect(() => {
     setLoading(true);
     const qs = new URLSearchParams({ period, sort, order });
-    if (category) qs.set("category", category);
-    api.request<UEData>("/api/v1/analytics/unit-economics?" + qs.toString())
-      .then(setData).catch(console.error).finally(() => setLoading(false));
-  }, [period, category, sort, order]);
+    if (category && category !== "all") qs.set("category", category);
+    if (marketplace && marketplace !== "all") qs.set("marketplace", marketplace);
+    api
+      .request<UEData>("/api/v1/analytics/unit-economics?" + qs.toString())
+      .then(setData)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [period, category, marketplace, sort, order]);
 
   const s = data?.summary;
+
+  const exportHeaders = [
+    "Товар", "SKU", "Категория", "Себест.", "Ср.цена",
+    "Продано", "Выручка", "Прибыль", "Маржа %", "На ед.",
+    "ROI %", "Возвр. %",
+  ];
+  const getExportRows = () =>
+    (data?.items || []).map((item) => [
+      item.name, item.sku, item.category,
+      String(item.cost_price), String(item.avg_price),
+      String(item.units_sold), String(item.revenue),
+      String(item.profit), String(item.margin_pct),
+      String(item.profit_per_unit), String(item.roi),
+      String(item.return_rate),
+    ]);
 
   return (
     <AppLayout>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Юнит-экономика</h1>
-          <p className="text-sm text-text-tertiary mt-0.5">Детальный расчёт по каждому товару</p>
+          <p className="text-sm text-text-tertiary mt-0.5">
+            Детальный расчёт по каждому товару
+          </p>
         </div>
         <div className="flex items-center gap-3">
-          <CategoryFilter value={category} onChange={setCategory} />
+          <ExportButton filename="unit-economics" headers={exportHeaders} getRows={getExportRows} />
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>
+      </div>
+
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
+        <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
+        <CategoryFilter value={category} onChange={setCategory} />
       </div>
 
       {loading ? (
@@ -109,6 +155,7 @@ export default function UnitEconomicsPage() {
               </div>
             </div>
           </div>
+
           <div className="rounded-2xl border border-border-subtle bg-surface-1 p-6">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -155,7 +202,7 @@ export default function UnitEconomicsPage() {
                             {item.units_returned} ({formatPercent(item.return_rate)})
                           </span>
                         ) : (
-                          <span className="text-text-tertiary">—</span>
+                          <span className="text-text-tertiary">{"—"}</span>
                         )}
                       </td>
                     </tr>
@@ -166,7 +213,9 @@ export default function UnitEconomicsPage() {
           </div>
         </div>
       ) : (
-        <div className="text-center py-20 text-text-tertiary">Не удалось загрузить данные</div>
+        <div className="text-center py-20 text-text-tertiary">
+          Не удалось загрузить данные
+        </div>
       )}
     </AppLayout>
   );

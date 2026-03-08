@@ -1,17 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import jwt from "jsonwebtoken";
+import { getUserFromRequest } from "@/lib/auth";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import path from "path";
-
-function getUserFromToken(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  try {
-    return jwt.verify(auth.slice(7), process.env.JWT_SECRET!) as { sub: string; email: string };
-  } catch {
-    return null;
-  }
-}
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const PROFILE_FILE = path.join(DATA_DIR, "profile.json");
@@ -20,9 +10,7 @@ async function readProfile(): Promise<Record<string, unknown>> {
   try {
     const raw = await readFile(PROFILE_FILE, "utf-8");
     return JSON.parse(raw);
-  } catch {
-    return {};
-  }
+  } catch { return {}; }
 }
 
 async function saveProfile(data: Record<string, unknown>) {
@@ -30,22 +18,44 @@ async function saveProfile(data: Record<string, unknown>) {
   await writeFile(PROFILE_FILE, JSON.stringify(data, null, 2));
 }
 
+export async function GET(req: NextRequest) {
+  const user = getUserFromRequest(req);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const profile = await readProfile();
+  return NextResponse.json({
+    email: user.email,
+    first_name: profile.first_name || "",
+    last_name: profile.last_name || "",
+    company: profile.company || "",
+    phone: profile.phone || "",
+    avatar_url: profile.avatar_url || null,
+  });
+}
+
 export async function PUT(req: NextRequest) {
-  const user = getUserFromToken(req);
+  const user = getUserFromRequest(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const { first_name, last_name } = await req.json();
+    const body = await req.json();
+
+    // Sanitize — only allow specific fields, max lengths
+    const ALLOWED_FIELDS = ["first_name", "last_name", "company", "phone"];
+    const MAX_LEN = 100;
+
     const profile = await readProfile();
-    profile[user.sub] = {
-      ...(profile[user.sub] as Record<string, unknown> || {}),
-      first_name,
-      last_name,
-      updated_at: new Date().toISOString(),
-    };
+    for (const field of ALLOWED_FIELDS) {
+      if (body[field] !== undefined) {
+        const val = String(body[field]).trim().slice(0, MAX_LEN);
+        profile[field] = val;
+      }
+    }
+
     await saveProfile(profile);
     return NextResponse.json({ success: true });
-  } catch (e: unknown) {
+  } catch (e) {
+    console.error("Profile update error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

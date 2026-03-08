@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
     const data = await salesRepo.getSales({
       days,
       category: sp.get("category") || undefined,
+      marketplace: sp.get("marketplace") || undefined,
       page: parseInt(sp.get("page") || "1") || 1,
       limit: parseInt(sp.get("limit") || "50") || 50,
     });

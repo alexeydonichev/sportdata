@@ -1,45 +1,54 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useState, useMemo } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import CategoryFilter from "@/components/ui/CategoryFilter";
+import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
 import ExportButton from "@/components/ui/ExportButton";
-import { api, InventoryResponse } from "@/lib/api";
+import Spinner from "@/components/ui/Spinner";
+import ErrorState from "@/components/ui/ErrorState";
+import { api } from "@/lib/api";
+import { useApiQuery } from "@/hooks/useApiQuery";
+import type { InventoryResponse, InventoryItem } from "@/types/models";
 import { formatNumber } from "@/lib/utils";
 import { AlertTriangle, CheckCircle, Clock } from "lucide-react";
 
+function stockBadge(days: number) {
+  if (days <= 7)
+    return { color: "text-accent-red bg-accent-red/10", icon: AlertTriangle, label: "Критично" };
+  if (days <= 21)
+    return { color: "text-accent-amber bg-accent-amber/10", icon: Clock, label: "Мало" };
+  return { color: "text-accent-green bg-accent-green/10", icon: CheckCircle, label: "Норма" };
+}
+
 export default function InventoryPage() {
-  const [data, setData] = useState<InventoryResponse | null>(null);
   const [category, setCategory] = useState("all");
-  const [loading, setLoading] = useState(true);
+  const [marketplace, setMarketplace] = useState("all");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.inventory({ category });
-      setData(res);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, [category]);
+  const { data, loading, error, refresh } = useApiQuery<InventoryResponse>(
+    () => api.inventory({ category, marketplace }),
+    [category, marketplace]
+  );
 
-  useEffect(() => { load(); }, [load]);
+  const counts = useMemo(() => {
+    const items = data?.items || [];
+    return {
+      critical: items.filter((i: InventoryItem) => i.days_of_stock <= 7).length,
+      low: items.filter((i: InventoryItem) => i.days_of_stock > 7 && i.days_of_stock <= 21).length,
+      ok: items.filter((i: InventoryItem) => i.days_of_stock > 21).length,
+    };
+  }, [data]);
 
-  function stockBadge(days: number) {
-    if (days <= 7) return { color: "text-accent-red bg-accent-red/10", icon: AlertTriangle, label: "Критично" };
-    if (days <= 21) return { color: "text-accent-amber bg-accent-amber/10", icon: Clock, label: "Мало" };
-    return { color: "text-accent-green bg-accent-green/10", icon: CheckCircle, label: "Норма" };
-  }
-
-  const critical = data?.items.filter(i => i.days_of_stock <= 7).length || 0;
-  const low = data?.items.filter(i => i.days_of_stock > 7 && i.days_of_stock <= 21).length || 0;
-  const ok = data?.items.filter(i => i.days_of_stock > 21).length || 0;
-
-  const exportHeaders = ["Товар", "SKU", "Категория", "Склад", "Остаток", "Продажи/день", "Хватит на (дней)", "Статус"];
-  const getExportRows = () => (data?.items || []).map((item) => [
-    item.name, item.sku, item.category, item.warehouse,
-    String(item.stock), String(item.avg_daily_sales.toFixed(1)),
-    String(item.days_of_stock >= 999 ? "∞" : item.days_of_stock),
-    item.days_of_stock <= 7 ? "Критично" : item.days_of_stock <= 21 ? "Мало" : "Норма",
-  ]);
+  const exportHeaders = [
+    "Товар", "SKU", "Категория", "Склад", "Остаток",
+    "Продажи/день", "Хватит на (дней)", "Статус",
+  ];
+  const getExportRows = () =>
+    (data?.items || []).map((item: InventoryItem) => [
+      item.name, item.sku, item.category, item.warehouse,
+      String(item.stock), String(item.avg_daily_sales.toFixed(1)),
+      String(item.days_of_stock >= 999 ? "999+" : item.days_of_stock),
+      item.days_of_stock <= 7 ? "Критично" : item.days_of_stock <= 21 ? "Мало" : "Норма",
+    ]);
 
   return (
     <AppLayout>
@@ -47,7 +56,11 @@ export default function InventoryPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Остатки на складах</h1>
           <p className="text-sm text-text-tertiary mt-0.5">
-            {data ? `${data.summary.products_in_stock} товаров · ${data.summary.warehouses} складов · ${formatNumber(data.summary.total_stock)} шт` : "Загрузка..."}
+            {data
+              ? data.summary.products_in_stock + " товаров · " +
+                data.summary.warehouses + " складов · " +
+                formatNumber(data.summary.total_stock) + " шт"
+              : "Загрузка..."}
           </p>
         </div>
         <ExportButton filename="inventory" headers={exportHeaders} getRows={getExportRows} />
@@ -56,32 +69,36 @@ export default function InventoryPage() {
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="rounded-xl border border-accent-red/20 bg-accent-red/5 p-4">
           <div className="flex items-center gap-2 text-accent-red text-xs font-medium mb-1">
-            <AlertTriangle className="h-3.5 w-3.5" />Критично (≤ 7 дней)
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {"Критично (≤ 7 дней)"}
           </div>
-          <p className="text-2xl font-semibold tabular-nums text-accent-red">{critical}</p>
+          <p className="text-2xl font-semibold tabular-nums text-accent-red">{counts.critical}</p>
         </div>
         <div className="rounded-xl border border-accent-amber/20 bg-accent-amber/5 p-4">
           <div className="flex items-center gap-2 text-accent-amber text-xs font-medium mb-1">
-            <Clock className="h-3.5 w-3.5" />Мало (8–21 день)
+            <Clock className="h-3.5 w-3.5" />
+            {"Мало (8–21 день)"}
           </div>
-          <p className="text-2xl font-semibold tabular-nums text-accent-amber">{low}</p>
+          <p className="text-2xl font-semibold tabular-nums text-accent-amber">{counts.low}</p>
         </div>
         <div className="rounded-xl border border-accent-green/20 bg-accent-green/5 p-4">
           <div className="flex items-center gap-2 text-accent-green text-xs font-medium mb-1">
-            <CheckCircle className="h-3.5 w-3.5" />Норма (22+ дней)
+            <CheckCircle className="h-3.5 w-3.5" />
+            {"Норма (22+ дней)"}
           </div>
-          <p className="text-2xl font-semibold tabular-nums text-accent-green">{ok}</p>
+          <p className="text-2xl font-semibold tabular-nums text-accent-green">{counts.ok}</p>
         </div>
       </div>
 
-      <div className="mb-6">
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
         <CategoryFilter value={category} onChange={setCategory} />
+        <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="h-5 w-5 border-2 border-border-default border-t-text-primary rounded-full animate-spin" />
-        </div>
+        <Spinner />
+      ) : error ? (
+        <ErrorState message={error} onRetry={refresh} />
       ) : data ? (
         <div className="rounded-xl border border-border-subtle bg-surface-1 overflow-hidden">
           <div className="overflow-x-auto">
@@ -98,11 +115,12 @@ export default function InventoryPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-subtle">
-                {data.items.map((item, i) => {
+                {data.items.map((item: InventoryItem, i: number) => {
                   const badge = stockBadge(item.days_of_stock);
                   const Icon = badge.icon;
                   return (
-                    <tr key={`${item.product_id}-${item.warehouse}-${i}`} className="hover:bg-surface-2/50 transition-colors">
+                    <tr key={item.product_id + "-" + item.warehouse + "-" + i}
+                      className="hover:bg-surface-2/50 transition-colors">
                       <td className="px-4 py-3">
                         <p className="font-medium text-text-primary truncate max-w-[250px]">{item.name}</p>
                         <p className="text-xs text-text-tertiary mt-0.5">{item.sku}</p>
@@ -118,8 +136,7 @@ export default function InventoryPage() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className={"inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium " + badge.color}>
-                          <Icon className="h-3 w-3" />
-                          {badge.label}
+                          <Icon className="h-3 w-3" />{badge.label}
                         </span>
                       </td>
                     </tr>
@@ -129,9 +146,7 @@ export default function InventoryPage() {
             </table>
           </div>
         </div>
-      ) : (
-        <div className="text-center py-20 text-text-tertiary">Не удалось загрузить</div>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

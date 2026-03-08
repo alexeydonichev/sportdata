@@ -1,18 +1,15 @@
 "use client";
-
-import { useEffect, useState, useCallback } from "react";
+import { useState, useMemo } from "react";
 import AppLayout from "@/components/layout/AppLayout";
-import { api, NotificationAlert, NotificationsResponse } from "@/lib/api";
+import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
+import Spinner from "@/components/ui/Spinner";
+import ErrorState from "@/components/ui/ErrorState";
+import { api } from "@/lib/api";
+import { useApiQuery } from "@/hooks/useApiQuery";
+import type { NotificationsResponse, NotificationAlert } from "@/types/models";
 import {
-  Bell,
-  AlertTriangle,
-  AlertCircle,
-  TrendingUp,
-  TrendingDown,
-  RotateCcw,
-  Package,
-  RefreshCw,
-  Filter,
+  Bell, AlertTriangle, AlertCircle, TrendingUp, TrendingDown,
+  RotateCcw, Package, RefreshCw,
 } from "lucide-react";
 
 const TYPE_CONFIG = {
@@ -21,9 +18,9 @@ const TYPE_CONFIG = {
   sales_spike: { icon: TrendingUp, color: "text-accent-green", bg: "bg-accent-green/10", border: "border-accent-green/20", label: "Всплеск продаж" },
   sales_drop: { icon: TrendingDown, color: "text-accent-red", bg: "bg-accent-red/10", border: "border-accent-red/20", label: "Падение продаж" },
   high_returns: { icon: RotateCcw, color: "text-accent-red", bg: "bg-accent-red/10", border: "border-accent-red/20", label: "Высокий возврат" },
-};
+} as const;
 
-const SEVERITY_STYLES = {
+const SEVERITY_STYLES: Record<string, string> = {
   critical: "border-accent-red/30 bg-accent-red/5",
   warning: "border-accent-amber/20 bg-accent-amber/5",
   info: "border-border-subtle bg-surface-1",
@@ -32,43 +29,34 @@ const SEVERITY_STYLES = {
 type FilterType = "all" | "stock" | "sales" | "returns";
 
 export default function NotificationsPage() {
-  const [data, setData] = useState<NotificationsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterType>("all");
-  const [refreshing, setRefreshing] = useState(false);
+  const [marketplace, setMarketplace] = useState("all");
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.notifications();
-      setData(res);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const { data, loading, error, refresh, refreshing } = useApiQuery<NotificationsResponse>(
+    () => {
+      const qs = new URLSearchParams();
+      if (marketplace && marketplace !== "all") qs.set("marketplace", marketplace);
+      return api.request<NotificationsResponse>("/api/v1/notifications?" + qs.toString());
+    },
+    [marketplace]
+  );
 
-  useEffect(() => { load(); }, [load]);
-
-  function handleRefresh() {
-    setRefreshing(true);
-    load();
-  }
-
-  const filtered = data?.alerts.filter((a) => {
-    if (filter === "all") return true;
-    if (filter === "stock") return a.type === "stock_critical" || a.type === "stock_low";
-    if (filter === "sales") return a.type === "sales_spike" || a.type === "sales_drop";
-    if (filter === "returns") return a.type === "high_returns";
-    return true;
-  }) || [];
+  const filtered = useMemo(() => {
+    if (!data) return [];
+    return data.alerts.filter((a: NotificationAlert) => {
+      if (filter === "all") return true;
+      if (filter === "stock") return a.type === "stock_critical" || a.type === "stock_low";
+      if (filter === "sales") return a.type === "sales_spike" || a.type === "sales_drop";
+      if (filter === "returns") return a.type === "high_returns";
+      return true;
+    });
+  }, [data, filter]);
 
   const filters: { key: FilterType; label: string; icon: typeof Bell; count: number }[] = [
     { key: "all", label: "Все", icon: Bell, count: data?.summary.total || 0 },
-    { key: "stock", label: "Остатки", icon: Package, count: data?.alerts.filter(a => a.type.startsWith("stock")).length || 0 },
-    { key: "sales", label: "Продажи", icon: TrendingUp, count: data?.alerts.filter(a => a.type.startsWith("sales")).length || 0 },
-    { key: "returns", label: "Возвраты", icon: RotateCcw, count: data?.alerts.filter(a => a.type === "high_returns").length || 0 },
+    { key: "stock", label: "Остатки", icon: Package, count: data?.alerts.filter((a: NotificationAlert) => a.type.startsWith("stock")).length || 0 },
+    { key: "sales", label: "Продажи", icon: TrendingUp, count: data?.alerts.filter((a: NotificationAlert) => a.type.startsWith("sales")).length || 0 },
+    { key: "returns", label: "Возвраты", icon: RotateCcw, count: data?.alerts.filter((a: NotificationAlert) => a.type === "high_returns").length || 0 },
   ];
 
   return (
@@ -76,30 +64,20 @@ export default function NotificationsPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-            <Bell className="h-5 w-5 text-text-secondary" />
-            Уведомления
+            <Bell className="h-5 w-5 text-text-secondary" />Уведомления
           </h1>
           <p className="text-sm text-text-tertiary mt-0.5">
             {data ? (
-              <>
-                {data.summary.total} алертов
-                {data.summary.critical > 0 && (
-                  <span className="text-accent-red ml-1">· {data.summary.critical} критических</span>
-                )}
-              </>
+              <>{data.summary.total} алертов{data.summary.critical > 0 && <span className="text-accent-red ml-1">· {data.summary.critical} критических</span>}</>
             ) : "Анализ данных..."}
           </p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="rounded-lg border border-border-default bg-surface-1 p-2 text-text-secondary hover:text-text-primary hover:border-border-strong transition-colors disabled:opacity-50"
-        >
+        <button onClick={refresh} disabled={refreshing}
+          className="rounded-lg border border-border-default bg-surface-1 p-2 text-text-secondary hover:text-text-primary hover:border-border-strong transition-colors disabled:opacity-50">
           <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} strokeWidth={1.5} />
         </button>
       </div>
 
-      {/* Summary cards */}
       {data && (
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className={"rounded-xl border p-4 " + (data.summary.critical > 0 ? "border-accent-red/30 bg-accent-red/5" : "border-border-subtle bg-surface-1")}>
@@ -117,86 +95,59 @@ export default function NotificationsPage() {
             <p className={"text-2xl font-semibold tabular-nums " + (data.summary.warning > 0 ? "text-accent-amber" : "text-text-primary")}>{data.summary.warning}</p>
           </div>
           <div className="rounded-xl border border-accent-green/20 bg-accent-green/5 p-4">
-            <div className="flex items-center gap-2 text-xs font-medium text-accent-green mb-1">
-              <Bell className="h-3.5 w-3.5" />Всего алертов
-            </div>
+            <div className="flex items-center gap-2 text-xs font-medium text-accent-green mb-1"><Bell className="h-3.5 w-3.5" />Всего алертов</div>
             <p className="text-2xl font-semibold tabular-nums text-text-primary">{data.summary.total}</p>
           </div>
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex items-center gap-2 mb-6">
-        {filters.map((f) => {
-          const Icon = f.icon;
-          return (
-            <button
-              key={f.key}
-              onClick={() => setFilter(f.key)}
-              className={
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border " +
-                (filter === f.key
-                  ? "bg-accent-white text-text-inverse border-accent-white"
-                  : "bg-surface-1 text-text-secondary border-border-default hover:border-border-strong hover:text-text-primary")
-              }
-            >
-              <Icon className="h-3 w-3" />
-              {f.label}
-              {f.count > 0 && (
-                <span className={
-                  "ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold " +
-                  (filter === f.key ? "bg-text-inverse/20 text-text-inverse" : "bg-surface-3 text-text-tertiary")
-                }>
-                  {f.count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
+        <div className="h-6 w-px bg-border-subtle" />
+        <div className="flex items-center gap-2">
+          {filters.map((f) => {
+            const Icon = f.icon;
+            return (
+              <button key={f.key} onClick={() => setFilter(f.key)}
+                className={"flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border " +
+                  (filter === f.key ? "bg-accent-white text-text-inverse border-accent-white" : "bg-surface-1 text-text-secondary border-border-default hover:border-border-strong hover:text-text-primary")}>
+                <Icon className="h-3 w-3" />{f.label}
+                {f.count > 0 && (
+                  <span className={"ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold " +
+                    (filter === f.key ? "bg-text-inverse/20 text-text-inverse" : "bg-surface-3 text-text-tertiary")}>{f.count}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Alerts list */}
-      {loading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="h-5 w-5 border-2 border-border-default border-t-text-primary rounded-full animate-spin" />
-        </div>
-      ) : filtered.length === 0 ? (
+      {loading ? <Spinner /> : error ? <ErrorState message={error} onRetry={refresh} /> : filtered.length === 0 ? (
         <div className="text-center py-20">
           <Bell className="h-10 w-10 text-text-tertiary mx-auto mb-3 opacity-30" />
           <p className="text-text-tertiary text-sm">Нет уведомлений</p>
-          <p className="text-text--tertiary text-xs mt-1">Всё в порядке! 🎉</p>
+          <p className="text-text-tertiary text-xs mt-1">Всё в порядке! 🎉</p>
         </div>
       ) : (
         <div className="space-y-3 animate-fade-in">
-          {filtered.map((alert) => {
+          {filtered.map((alert: NotificationAlert) => {
             const config = TYPE_CONFIG[alert.type];
             const Icon = config.icon;
             return (
-              <div
-                key={alert.id}
-                className={"rounded-xl border p-4 transition-colors hover:border-border-default " + SEVERITY_STYLES[alert.severity]}
-              >
+              <div key={alert.id} className={"rounded-xl border p-4 transition-colors hover:border-border-default " + SEVERITY_STYLES[alert.severity]}>
                 <div className="flex items-start gap-3">
-                  <div className={"rounded-lg p-2 " + config.bg}>
-                    <Icon className={"h-4 w-4 " + config.color} />
-                  </div>
+                  <div className={"rounded-lg p-2 " + config.bg}><Icon className={"h-4 w-4 " + config.color} /></div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className={"text-xs font-medium px-2 py-0.5 rounded-full " + config.bg + " " + config.color}>
-                        {config.label}
-                      </span>
-                      <span className={
-                        "text-[10px] font-bold px-1.5 py-0.5 rounded uppercase " +
-                        (alert.severity === "critical" ? "bg-accent-red/20 text-accent-red" : "bg-accent-amber/20 text-accent-amber")
-                      }>
+                      <span className={"text-xs font-medium px-2 py-0.5 rounded-full " + config.bg + " " + config.color}>{config.label}</span>
+                      <span className={"text-[10px] font-bold px-1.5 py-0.5 rounded uppercase " +
+                        (alert.severity === "critical" ? "bg-accent-red/20 text-accent-red" : "bg-accent-amber/20 text-accent-amber")}>
                         {alert.severity === "critical" ? "КРИТ" : "ВНИМАНИЕ"}
                       </span>
                     </div>
                     <p className="text-sm text-text-primary font-medium">{alert.title}</p>
                     <p className="text-xs text-text-secondary mt-0.5">{alert.message}</p>
-                    {alert.sku && (
-                      <p className="text-[11px] text-text-tertiary mt-1">SKU: {alert.sku}</p>
-                    )}
+                    {alert.sku && <p className="text-[11px] text-text-tertiary mt-1">SKU: {alert.sku}</p>}
                   </div>
                   {alert.value !== undefined && (
                     <div className="text-right shrink-0">

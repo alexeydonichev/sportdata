@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
       sort: sp.get("sort") || undefined,
       order: sp.get("order") || undefined,
       category: sp.get("category") || undefined,
+      marketplace: sp.get("marketplace") || undefined,
     });
     return NextResponse.json({ period, ...data });
   } catch (e) {

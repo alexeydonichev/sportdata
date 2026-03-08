@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import pool from "@/lib/db";
-import { encrypt, maskKey, decrypt } from "@/lib/crypto";
+import { encrypt } from "@/lib/crypto";
+import { getUserFromRequest } from "@/lib/auth";
+import { auditLog } from "@/lib/audit";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -14,10 +16,12 @@ export async function GET() {
         mc.id as credential_id,
         mc.name as credential_name,
         mc.client_id,
-        mc.api_key_encrypted,
         mc.is_active as credential_active,
         mc.created_at as connected_at,
         mc.updated_at,
+        CASE WHEN mc.id IS NOT NULL THEN
+          CONCAT(LEFT(mc.api_key_hint, 4), '••••••••')
+        ELSE NULL END as api_key_masked,
         CASE WHEN mc.id IS NOT NULL AND mc.is_active THEN 'connected'
              WHEN mc.id IS NOT NULL AND NOT mc.is_active THEN 'disabled'
              ELSE 'not_connected' END as status,
@@ -37,25 +41,7 @@ export async function GET() {
       ORDER BY m.id
     `);
 
-    // Mask API keys — never send raw keys to frontend
-    const safeRows = rows.map((row: Record<string, unknown>) => {
-      const r = { ...row };
-      if (r.api_key_encrypted) {
-        try {
-          const decrypted = decrypt(String(r.api_key_encrypted));
-          r.api_key_masked = maskKey(decrypted);
-        } catch {
-          // Legacy plaintext key — mask it directly
-          r.api_key_masked = maskKey(String(r.api_key_encrypted));
-        }
-      } else {
-        r.api_key_masked = null;
-      }
-      delete r.api_key_encrypted; // Never expose to frontend
-      return r;
-    });
-
-    return NextResponse.json(safeRows);
+    return NextResponse.json(rows);
   } catch (e: unknown) {
     console.error("Sync credentials error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -63,6 +49,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const user = getUserFromRequest(req);
+
   try {
     const body = await req.json();
     const { marketplace_id, name, api_key, client_id } = body;
@@ -82,9 +70,8 @@ export async function POST(req: NextRequest) {
     }
 
     const safeName = String(name || "API Key").slice(0, 100).replace(/[<>&"']/g, "");
-
-    // Encrypt the API key before storing
     const encryptedKey = encrypt(key);
+    const keyHint = key.slice(0, 8);
 
     const existing = await pool.query(
       "SELECT id FROM marketplace_credentials WHERE marketplace_id = $1",
@@ -94,18 +81,19 @@ export async function POST(req: NextRequest) {
     if (existing.rows.length > 0) {
       await pool.query(
         `UPDATE marketplace_credentials
-         SET api_key_encrypted = $1, client_id = $2, name = $3, is_active = true, updated_at = NOW()
+         SET api_key_encrypted = $1, client_id = $2, name = $3, api_key_hint = $5, is_active = true, updated_at = NOW()
          WHERE marketplace_id = $4`,
-        [encryptedKey, client_id || null, safeName, mpId]
+        [encryptedKey, client_id || null, safeName, mpId, keyHint]
       );
     } else {
       await pool.query(
-        `INSERT INTO marketplace_credentials (marketplace_id, name, api_key_encrypted, client_id, is_active)
-         VALUES ($1, $2, $3, $4, true)`,
-        [mpId, safeName, encryptedKey, client_id || null]
+        `INSERT INTO marketplace_credentials (marketplace_id, name, api_key_encrypted, api_key_hint, client_id, is_active)
+         VALUES ($1, $2, $3, $4, $5, true)`,
+        [mpId, safeName, encryptedKey, keyHint, client_id || null]
       );
     }
 
+    await auditLog("credential_save", user, { marketplace_id: mpId });
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
     console.error("Save credential error:", e);
@@ -114,6 +102,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const user = getUserFromRequest(req);
+
   try {
     const mpId = parseInt(req.nextUrl.searchParams.get("marketplace_id") || "");
     if (isNaN(mpId) || mpId < 1) {
@@ -125,6 +115,7 @@ export async function DELETE(req: NextRequest) {
       [mpId]
     );
 
+    await auditLog("credential_disconnect", user, { marketplace_id: mpId });
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
     console.error("Disconnect marketplace error:", e);

@@ -7,51 +7,96 @@ import type {
   TopProduct,
 } from "@/types/models";
 
-// ============================================================
-// Dashboard Repository — все SQL-запросы дашборда
-// ============================================================
-
 function pctChange(current: number, previous: number): number | null {
   if (previous === 0 && current === 0) return 0;
   if (previous === 0) return current > 0 ? 100 : -100;
   return parseFloat((((current - previous) / previous) * 100).toFixed(1));
 }
 
+interface DashboardFilters {
+  days: number;
+  category?: string;
+  marketplace?: string;
+}
+
+function buildFilters(
+  filters: DashboardFilters,
+  startIdx = 1
+): { conditions: string[]; params: (string | number)[]; idx: number } {
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+  let idx = startIdx - 1;
+
+  idx++;
+  params.push(filters.days);
+
+  if (filters.category && filters.category !== "all") {
+    idx++;
+    conditions.push(`c.slug = $${idx}`);
+    params.push(filters.category);
+  }
+
+  if (filters.marketplace && filters.marketplace !== "all") {
+    idx++;
+    conditions.push(`mp.slug = $${idx}`);
+    params.push(filters.marketplace);
+  }
+
+  return { conditions, params, idx };
+}
+
 /**
  * KPI + сравнение с предыдущим периодом
  */
-export async function getKPI(days: number): Promise<{
+export async function getKPI(
+  days: number,
+  category?: string,
+  marketplace?: string
+): Promise<{
   kpi: DashboardKPI;
   changes: DashboardChanges;
 }> {
+  const f = buildFilters({ days, category, marketplace });
+  const catMpJoin = `
+    JOIN products p ON p.id = s.product_id
+    JOIN categories c ON c.id = p.category_id
+    JOIN marketplaces mp ON mp.id = s.marketplace_id
+  `;
+  const extraWhere =
+    f.conditions.length > 0 ? " AND " + f.conditions.join(" AND ") : "";
+
   const { rows } = await pool.query(
     `
     WITH current_period AS (
       SELECT
-        COALESCE(SUM(revenue), 0)::float       AS total_revenue,
-        COALESCE(SUM(net_profit), 0)::float     AS total_profit,
-        COALESCE(SUM(quantity), 0)::int         AS total_quantity,
-        COUNT(*)::int                           AS total_orders,
-        COUNT(DISTINCT product_id)::int         AS total_sku,
-        COALESCE(SUM(commission), 0)::float     AS total_commission,
-        COALESCE(SUM(logistics_cost), 0)::float AS total_logistics,
-        MIN(sale_date)::text                    AS date_from,
-        MAX(sale_date)::text                    AS date_to
-      FROM sales
-      WHERE sale_date >= CURRENT_DATE - $1::int
+        COALESCE(SUM(s.revenue), 0)::float       AS total_revenue,
+        COALESCE(SUM(s.net_profit), 0)::float     AS total_profit,
+        COALESCE(SUM(s.quantity), 0)::int         AS total_quantity,
+        COUNT(*)::int                             AS total_orders,
+        COUNT(DISTINCT s.product_id)::int         AS total_sku,
+        COALESCE(SUM(s.commission), 0)::float     AS total_commission,
+        COALESCE(SUM(s.logistics_cost), 0)::float AS total_logistics,
+        MIN(s.sale_date)::text                    AS date_from,
+        MAX(s.sale_date)::text                    AS date_to
+      FROM sales s
+      ${catMpJoin}
+      WHERE s.sale_date >= CURRENT_DATE - $1::int
+      ${extraWhere}
     ),
     previous_period AS (
       SELECT
-        COALESCE(SUM(revenue), 0)::float       AS total_revenue,
-        COALESCE(SUM(net_profit), 0)::float     AS total_profit,
-        COALESCE(SUM(quantity), 0)::int         AS total_quantity,
-        COUNT(*)::int                           AS total_orders,
-        COUNT(DISTINCT product_id)::int         AS total_sku,
-        COALESCE(SUM(commission), 0)::float     AS total_commission,
-        COALESCE(SUM(logistics_cost), 0)::float AS total_logistics
-      FROM sales
-      WHERE sale_date >= CURRENT_DATE - ($1::int * 2)
-        AND sale_date <  CURRENT_DATE - $1::int
+        COALESCE(SUM(s.revenue), 0)::float       AS total_revenue,
+        COALESCE(SUM(s.net_profit), 0)::float     AS total_profit,
+        COALESCE(SUM(s.quantity), 0)::int         AS total_quantity,
+        COUNT(*)::int                             AS total_orders,
+        COUNT(DISTINCT s.product_id)::int         AS total_sku,
+        COALESCE(SUM(s.commission), 0)::float     AS total_commission,
+        COALESCE(SUM(s.logistics_cost), 0)::float AS total_logistics
+      FROM sales s
+      ${catMpJoin}
+      WHERE s.sale_date >= CURRENT_DATE - ($1::int * 2)
+        AND s.sale_date <  CURRENT_DATE - $1::int
+      ${extraWhere}
     )
     SELECT
       c.*,
@@ -64,7 +109,7 @@ export async function getKPI(days: number): Promise<{
       p.total_logistics  AS prev_logistics
     FROM current_period c, previous_period p
     `,
-    [days]
+    f.params
   );
 
   const m = rows[0];
@@ -106,21 +151,38 @@ export async function getKPI(days: number): Promise<{
 /**
  * Данные для графика по дням
  */
-export async function getChart(days: number): Promise<ChartDataPoint[]> {
+export async function getChart(
+  days: number,
+  category?: string,
+  marketplace?: string
+): Promise<ChartDataPoint[]> {
+  const f = buildFilters({ days, category, marketplace });
+  const extraWhere =
+    f.conditions.length > 0 ? " AND " + f.conditions.join(" AND ") : "";
+
+  const needsJoin = !!(category || marketplace);
+  const joins = needsJoin
+    ? `JOIN products p ON p.id = s.product_id
+       JOIN categories c ON c.id = p.category_id
+       JOIN marketplaces mp ON mp.id = s.marketplace_id`
+    : "";
+
   const { rows } = await pool.query(
     `
     SELECT
-      sale_date::text                      AS date,
-      COALESCE(SUM(revenue), 0)::float     AS revenue,
-      COALESCE(SUM(net_profit), 0)::float  AS profit,
-      COUNT(*)::int                        AS orders,
-      COALESCE(SUM(quantity), 0)::int      AS quantity
-    FROM sales
-    WHERE sale_date >= CURRENT_DATE - $1::int
-    GROUP BY sale_date
-    ORDER BY sale_date
+      s.sale_date::text                      AS date,
+      COALESCE(SUM(s.revenue), 0)::float     AS revenue,
+      COALESCE(SUM(s.net_profit), 0)::float  AS profit,
+      COUNT(*)::int                          AS orders,
+      COALESCE(SUM(s.quantity), 0)::int      AS quantity
+    FROM sales s
+    ${joins}
+    WHERE s.sale_date >= CURRENT_DATE - $1::int
+    ${extraWhere}
+    GROUP BY s.sale_date
+    ORDER BY s.sale_date
     `,
-    [days]
+    f.params
   );
   return rows;
 }
@@ -130,8 +192,23 @@ export async function getChart(days: number): Promise<ChartDataPoint[]> {
  */
 export async function getByMarketplace(
   days: number,
-  totalRevenue: number
+  totalRevenue: number,
+  category?: string
 ): Promise<MarketplaceStats[]> {
+  const conditions: string[] = [];
+  const params: (string | number)[] = [days];
+  let idx = 1;
+
+  if (category && category !== "all") {
+    idx++;
+    conditions.push(`c.slug = $${idx}`);
+    params.push(category);
+  }
+
+  const extraWhere =
+    conditions.length > 0 ? " AND " + conditions.join(" AND ") : "";
+  const needsCatJoin = !!(category && category !== "all");
+
   const { rows } = await pool.query(
     `
     SELECT
@@ -142,11 +219,13 @@ export async function getByMarketplace(
       COALESCE(SUM(s.quantity), 0)::int    AS quantity
     FROM sales s
     JOIN marketplaces mp ON mp.id = s.marketplace_id
+    ${needsCatJoin ? "JOIN products p ON p.id = s.product_id JOIN categories c ON c.id = p.category_id" : ""}
     WHERE s.sale_date >= CURRENT_DATE - $1::int
+    ${extraWhere}
     GROUP BY mp.slug, mp.name
     ORDER BY revenue DESC
     `,
-    [days]
+    params
   );
 
   const total = totalRevenue || 1;
@@ -161,8 +240,32 @@ export async function getByMarketplace(
  */
 export async function getTopProducts(
   days: number,
-  limit = 10
+  limit = 10,
+  category?: string,
+  marketplace?: string
 ): Promise<TopProduct[]> {
+  const conditions: string[] = [];
+  const params: (string | number)[] = [days];
+  let idx = 1;
+
+  if (category && category !== "all") {
+    idx++;
+    conditions.push(`c.slug = $${idx}`);
+    params.push(category);
+  }
+
+  if (marketplace && marketplace !== "all") {
+    idx++;
+    conditions.push(`mp.slug = $${idx}`);
+    params.push(marketplace);
+  }
+
+  idx++;
+  params.push(limit);
+
+  const extraWhere =
+    conditions.length > 0 ? " AND " + conditions.join(" AND ") : "";
+
   const { rows } = await pool.query(
     `
     SELECT
@@ -174,12 +277,15 @@ export async function getTopProducts(
       COALESCE(SUM(s.net_profit), 0)::float  AS profit
     FROM sales s
     JOIN products p ON p.id = s.product_id
+    JOIN categories c ON c.id = p.category_id
+    JOIN marketplaces mp ON mp.id = s.marketplace_id
     WHERE s.sale_date >= CURRENT_DATE - $1::int
+    ${extraWhere}
     GROUP BY p.id, p.name, p.sku
     ORDER BY revenue DESC
-    LIMIT $2
+    LIMIT $${idx}
     `,
-    [days, limit]
+    params
   );
   return rows;
 }

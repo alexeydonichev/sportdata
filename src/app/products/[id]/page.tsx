@@ -38,7 +38,7 @@ export default function ProductDetailPage() {
           </Link>
           <div>
             <h1 className="text-xl font-semibold tracking-tight">{data?.product.name || "Загрузка..."}</h1>
-            <p className="text-sm text-text-tertiary mt-0.5">{data ? data.product.sku + " \u00B7 " + data.product.category : ""}</p>
+            <p className="text-sm text-text-tertiary mt-0.5">{data ? data.product.sku + " · " + data.product.category : ""}</p>
           </div>
         </div>
         <PeriodSelector value={period} onChange={setPeriod} />

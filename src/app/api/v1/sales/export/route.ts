@@ -16,9 +16,10 @@ export async function GET(req: NextRequest) {
   const period = (sp.get("period") || "30d") as PeriodKey;
   const days = PERIOD_DAYS[period] || 30;
   const category = sp.get("category") || undefined;
+  const marketplace = sp.get("marketplace") || undefined;
 
   try {
-    const rows = await salesRepo.getSalesForExport(days, category);
+    const rows = await salesRepo.getSalesForExport(days, category, marketplace);
 
     const bom = "\uFEFF";
     const header = "Дата,Товар,SKU,Категория,Маркетплейс,Количество,Выручка,Прибыль,Комиссия,Логистика";

@@ -8,10 +8,11 @@ function pctChange(cur: number, prev: number): number | null {
 }
 
 export async function getProductDetail(productId: number, days: number): Promise<ProductDetail | null> {
+  // 1. Product info
   const productRes = await pool.query(`
     SELECT
       p.id::text, p.name, p.sku, p.barcode,
-      p.cost_price::float, p.price::float,
+      p.cost_price::float,
       c.name AS category, c.slug AS category_slug,
       p.created_at::text
     FROM products p
@@ -23,32 +24,45 @@ export async function getProductDetail(productId: number, days: number): Promise
 
   const product = productRes.rows[0];
 
+  // 2. Metrics for current period
   const metricsRes = await pool.query(`
     SELECT
-      COALESCE(SUM(revenue), 0)::float AS total_revenue,
+      COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END), 0)::float AS total_revenue,
       COALESCE(SUM(net_profit), 0)::float AS total_profit,
       COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0)::int AS total_sold,
-      COUNT(*)::int AS total_orders,
-      COALESCE(AVG(CASE WHEN revenue > 0 THEN revenue END), 0)::float AS avg_price,
-      COALESCE(SUM(commission), 0)::float AS total_commission,
-      COALESCE(SUM(logistics_cost), 0)::float AS total_logistics,
+      COUNT(CASE WHEN quantity > 0 THEN 1 END)::int AS total_orders,
+      COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0)::float AS total_commission,
+      COALESCE(SUM(CASE WHEN quantity > 0 THEN logistics_cost ELSE 0 END), 0)::float AS total_logistics,
       COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END), 0)::int AS total_returns
     FROM sales
     WHERE product_id = $1 AND sale_date >= CURRENT_DATE - $2::int
   `, [productId, days]);
 
   const metrics = metricsRes.rows[0];
+
+  // Avg price from sales
+  const avgPriceRes = await pool.query(`
+    SELECT CASE WHEN SUM(quantity) > 0
+      THEN (SUM(revenue) / SUM(quantity))::float
+      ELSE 0
+    END AS avg_price
+    FROM sales
+    WHERE product_id = $1 AND sale_date >= CURRENT_DATE - $2::int AND quantity > 0
+  `, [productId, days]);
+  const avgPrice = avgPriceRes.rows[0]?.avg_price || 0;
+
   const marginPct = metrics.total_revenue > 0
     ? (metrics.total_profit / metrics.total_revenue) * 100 : 0;
   const returnPct = metrics.total_sold > 0
     ? (metrics.total_returns / metrics.total_sold) * 100 : 0;
 
+  // 3. Previous period for changes
   const prevRes = await pool.query(`
     SELECT
-      COALESCE(SUM(revenue), 0)::float AS total_revenue,
+      COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END), 0)::float AS total_revenue,
       COALESCE(SUM(net_profit), 0)::float AS total_profit,
       COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0)::int AS total_sold,
-      COUNT(*)::int AS total_orders
+      COUNT(CASE WHEN quantity > 0 THEN 1 END)::int AS total_orders
     FROM sales
     WHERE product_id = $1
       AND sale_date >= CURRENT_DATE - ($2::int * 2)
@@ -64,32 +78,34 @@ export async function getProductDetail(productId: number, days: number): Promise
     orders: pctChange(metrics.total_orders, prev.total_orders),
   };
 
+  // 4. Chart data
   const chartRes = await pool.query(`
     SELECT
       sale_date::text AS date,
-      COALESCE(SUM(revenue), 0)::float AS revenue,
+      COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END), 0)::float AS revenue,
       COALESCE(SUM(net_profit), 0)::float AS profit,
       COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0)::int AS quantity,
-      COUNT(*)::int AS orders
+      COUNT(CASE WHEN quantity > 0 THEN 1 END)::int AS orders
     FROM sales
     WHERE product_id = $1 AND sale_date >= CURRENT_DATE - $2::int
     GROUP BY sale_date
     ORDER BY sale_date
   `, [productId, days]);
 
+  // 5. Inventory — warehouse is varchar, no warehouses table
   const inventoryRes = await pool.query(`
     SELECT
-      w.name AS warehouse,
-      COALESCE(i.quantity, 0)::int AS stock,
-      i.updated_at::text
-    FROM inventory i
-    JOIN warehouses w ON w.id = i.warehouse_id
-    WHERE i.product_id = $1 AND i.quantity > 0
-    ORDER BY i.quantity DESC
+      warehouse,
+      quantity::int AS stock,
+      recorded_at::text AS updated_at
+    FROM inventory
+    WHERE product_id = $1 AND quantity > 0
+    ORDER BY quantity DESC
   `, [productId]);
 
   const totalStock = inventoryRes.rows.reduce((s: number, r: { stock: number }) => s + r.stock, 0);
 
+  // 6. Avg daily sales (last 30 days)
   const dailyAvgRes = await pool.query(`
     SELECT COALESCE(AVG(daily_qty), 0)::float AS avg_daily
     FROM (
@@ -103,11 +119,12 @@ export async function getProductDetail(productId: number, days: number): Promise
   const avgDaily = dailyAvgRes.rows[0]?.avg_daily || 0;
   const daysOfStock = avgDaily > 0 ? Math.floor(totalStock / avgDaily) : 999;
 
+  // 7. ABC grade
   const abcRes = await pool.query(`
     WITH product_revenues AS (
       SELECT product_id, SUM(revenue)::float AS revenue
       FROM sales
-      WHERE sale_date >= CURRENT_DATE - $1::int
+      WHERE sale_date >= CURRENT_DATE - $1::int AND quantity > 0
       GROUP BY product_id
     ),
     ranked AS (
@@ -129,13 +146,14 @@ export async function getProductDetail(productId: number, days: number): Promise
 
   const abc = abcRes.rows[0] || { grade: "C", revenue_share: 0 };
 
+  // 8. By marketplace
   const mpRes = await pool.query(`
     SELECT
       mp.slug AS marketplace,
       mp.name,
-      COALESCE(SUM(s.revenue), 0)::float AS revenue,
+      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue ELSE 0 END), 0)::float AS revenue,
       COALESCE(SUM(s.net_profit), 0)::float AS profit,
-      COALESCE(SUM(s.quantity), 0)::int AS quantity
+      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END), 0)::int AS quantity
     FROM sales s
     JOIN marketplaces mp ON mp.id = s.marketplace_id
     WHERE s.product_id = $1 AND s.sale_date >= CURRENT_DATE - $2::int
@@ -144,9 +162,13 @@ export async function getProductDetail(productId: number, days: number): Promise
   `, [productId, days]);
 
   return {
-    product,
+    product: {
+      ...product,
+      price: avgPrice,
+    },
     metrics: {
       ...metrics,
+      avg_price: parseFloat(avgPrice.toFixed(0)),
       margin_pct: parseFloat(marginPct.toFixed(1)),
       return_pct: parseFloat(returnPct.toFixed(1)),
     },

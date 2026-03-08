@@ -7,6 +7,7 @@ export async function GET(req: NextRequest) {
   try {
     const products = await productsRepo.getProducts({
       category: sp.get("category") || undefined,
+      marketplace: sp.get("marketplace") || undefined,
       search: sp.get("search") || undefined,
       sort: sp.get("sort") || undefined,
       order: (sp.get("order") as "asc" | "desc") || undefined,

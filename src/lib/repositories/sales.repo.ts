@@ -1,15 +1,12 @@
 import pool from "@/lib/db";
 import type { SaleRow, SalesPage } from "@/types/models";
 
-// ============================================================
-// Sales Repository
-// ============================================================
-
 const MAX_LIMIT = 200;
 
 interface SalesQueryParams {
   days: number;
   category?: string;
+  marketplace?: string;
   page?: number;
   limit?: number;
 }
@@ -18,7 +15,7 @@ interface SalesQueryParams {
  * Продажи с пагинацией
  */
 export async function getSales(params: SalesQueryParams): Promise<SalesPage> {
-  const { days, category } = params;
+  const { days, category, marketplace } = params;
   const page = Math.max(1, params.page || 1);
   const limit = Math.min(MAX_LIMIT, Math.max(1, params.limit || 50));
   const offset = (page - 1) * limit;
@@ -37,6 +34,12 @@ export async function getSales(params: SalesQueryParams): Promise<SalesPage> {
     queryParams.push(category);
   }
 
+  if (marketplace && marketplace !== "all") {
+    idx++;
+    conditions.push(`mp.slug = $${idx}`);
+    queryParams.push(marketplace);
+  }
+
   const where = "WHERE " + conditions.join(" AND ");
 
   const countResult = await pool.query(
@@ -44,6 +47,7 @@ export async function getSales(params: SalesQueryParams): Promise<SalesPage> {
      FROM sales s
      JOIN products p ON p.id = s.product_id
      JOIN categories c ON c.id = p.category_id
+     JOIN marketplaces mp ON mp.id = s.marketplace_id
      ${where}`,
     queryParams
   );
@@ -61,7 +65,8 @@ export async function getSales(params: SalesQueryParams): Promise<SalesPage> {
       s.net_profit::float            AS profit,
       s.commission::float,
       s.logistics_cost::float        AS logistics,
-      mp.name                        AS marketplace
+      mp.name                        AS marketplace,
+      mp.slug                        AS marketplace_slug
     FROM sales s
     JOIN products p ON p.id = s.product_id
     JOIN categories c ON c.id = p.category_id
@@ -87,7 +92,8 @@ export async function getSales(params: SalesQueryParams): Promise<SalesPage> {
  */
 export async function getSalesForExport(
   days: number,
-  category?: string
+  category?: string,
+  marketplace?: string
 ): Promise<SaleRow[]> {
   const conditions: string[] = [];
   const params: (string | number)[] = [];
@@ -101,6 +107,12 @@ export async function getSalesForExport(
     idx++;
     conditions.push(`c.slug = $${idx}`);
     params.push(category);
+  }
+
+  if (marketplace && marketplace !== "all") {
+    idx++;
+    conditions.push(`mp.slug = $${idx}`);
+    params.push(marketplace);
   }
 
   const where = "WHERE " + conditions.join(" AND ");

@@ -32,6 +32,7 @@ export function formatDateTime(date: string): string {
 }
 
 export const mpColors: Record<string, string> = {
+  wb: "#CB11AB",
   wildberries: "#CB11AB",
   ozon: "#005BFF",
   yandex_market: "#FFCC00",
@@ -39,6 +40,7 @@ export const mpColors: Record<string, string> = {
 };
 
 export const mpNames: Record<string, string> = {
+  wb: "Wildberries",
   wildberries: "Wildberries",
   ozon: "Ozon",
   yandex_market: "Яндекс Маркет",

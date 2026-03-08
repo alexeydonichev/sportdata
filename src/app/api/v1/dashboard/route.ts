@@ -3,13 +3,16 @@ import { PERIOD_DAYS, type PeriodKey } from "@/types/models";
 import { dashboardRepo } from "@/lib/repositories";
 
 export async function GET(req: NextRequest) {
-  const period = (req.nextUrl.searchParams.get("period") || "7d") as PeriodKey;
+  const sp = req.nextUrl.searchParams;
+  const period = (sp.get("period") || "7d") as PeriodKey;
   const days = PERIOD_DAYS[period] || 7;
+  const category = sp.get("category") || undefined;
+  const marketplace = sp.get("marketplace") || undefined;
 
   try {
-    const { kpi, changes } = await dashboardRepo.getKPI(days);
-    const byMarketplace = await dashboardRepo.getByMarketplace(days, kpi.total_revenue);
-    const topProducts = await dashboardRepo.getTopProducts(days);
+    const { kpi, changes } = await dashboardRepo.getKPI(days, category, marketplace);
+    const byMarketplace = await dashboardRepo.getByMarketplace(days, kpi.total_revenue, category);
+    const topProducts = await dashboardRepo.getTopProducts(days, 10, category, marketplace);
 
     return NextResponse.json({
       period,

@@ -1,21 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { productsRepo } from "@/lib/repositories";
 
-const ALLOWED_DAYS = [30, 60, 90, 180, 365];
+const PERIODS: Record<string, number> = {
+  "7": 7, "7d": 7, "14": 14, "14d": 14,
+  "30": 30, "30d": 30, "90": 90, "90d": 90,
+};
 
 export async function GET(req: NextRequest) {
-  let days = parseInt(req.nextUrl.searchParams.get("period") || "90") || 90;
-  if (!ALLOWED_DAYS.includes(days)) {
-    days = ALLOWED_DAYS.reduce((prev, curr) =>
-      Math.abs(curr - days) < Math.abs(prev - days) ? curr : prev
-    );
-  }
+  const sp = req.nextUrl.searchParams;
+  const period = sp.get("period") || "90";
+  const days = PERIODS[period + "d"] || PERIODS[period] || parseInt(period) || 90;
+  const marketplace = sp.get("marketplace") || undefined;
 
   try {
-    const products = await productsRepo.getProductsForABC(days);
+    const products = await productsRepo.getProductsForABC(days, marketplace);
     return NextResponse.json({ products });
   } catch (e: unknown) {
-    console.error("ABC analysis error:", e);
+    console.error("ABC error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

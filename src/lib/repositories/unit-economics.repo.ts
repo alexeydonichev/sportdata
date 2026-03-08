@@ -50,16 +50,25 @@ const ALLOWED_SORTS: Record<string, string> = {
 
 export async function getUnitEconomics(
   days: number,
-  opts: { sort?: string; order?: string; category?: string } = {}
+  opts: { sort?: string; order?: string; category?: string; marketplace?: string } = {}
 ): Promise<UnitEconomicsData> {
   const sortCol = ALLOWED_SORTS[opts.sort || "revenue"] || "revenue";
   const sortDir = opts.order === "asc" ? "ASC" : "DESC";
 
   const params: (number | string)[] = [days];
   let catWhere = "";
-  if (opts.category) {
+  let mpJoin = "";
+  let mpWhere = "";
+
+  if (opts.category && opts.category !== "all") {
     params.push(opts.category);
-    catWhere = "AND c.slug = $2";
+    catWhere = `AND c.slug = $${params.length}`;
+  }
+
+  if (opts.marketplace && opts.marketplace !== "all") {
+    params.push(opts.marketplace);
+    mpJoin = "JOIN marketplaces mp ON mp.id = s.marketplace_id";
+    mpWhere = `AND mp.slug = $${params.length}`;
   }
 
   const res = await pool.query(`
@@ -90,7 +99,8 @@ export async function getUnitEconomics(
     FROM products p
     JOIN sales s ON s.product_id = p.id AND s.sale_date >= CURRENT_DATE - $1::int
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE 1=1 ${catWhere}
+    ${mpJoin}
+    WHERE 1=1 ${catWhere} ${mpWhere}
     GROUP BY p.id, p.name, p.sku, p.cost_price, c.name, c.slug
     HAVING SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END) > 0
     ORDER BY ${sortCol} ${sortDir}

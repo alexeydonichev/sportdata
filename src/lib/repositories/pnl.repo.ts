@@ -38,12 +38,21 @@ function pctChange(cur: number, prev: number): number {
   return parseFloat((((cur - prev) / Math.abs(prev)) * 100).toFixed(1));
 }
 
-export async function getPnL(days: number, categorySlug?: string): Promise<PnLData> {
+export async function getPnL(days: number, categorySlug?: string, marketplace?: string): Promise<PnLData> {
   const params: (number | string)[] = [days];
   let catFilter = "";
-  if (categorySlug) {
+  let mpJoin = "";
+  let mpFilter = "";
+
+  if (categorySlug && categorySlug !== "all") {
     params.push(categorySlug);
-    catFilter = "AND c.slug = $2";
+    catFilter = `AND c.slug = $${params.length}`;
+  }
+
+  if (marketplace && marketplace !== "all") {
+    params.push(marketplace);
+    mpJoin = "JOIN marketplaces mp ON mp.id = s.marketplace_id";
+    mpFilter = `AND mp.slug = $${params.length}`;
   }
 
   const pnlRes = await pool.query(`
@@ -52,8 +61,9 @@ export async function getPnL(days: number, categorySlug?: string): Promise<PnLDa
       FROM sales s
       JOIN products p ON p.id = s.product_id
       LEFT JOIN categories c ON c.id = p.category_id
+      ${mpJoin}
       WHERE s.sale_date >= CURRENT_DATE - $1::int
-      ${catFilter}
+      ${catFilter} ${mpFilter}
     ),
     current_agg AS (
       SELECT
@@ -73,9 +83,10 @@ export async function getPnL(days: number, categorySlug?: string): Promise<PnLDa
       FROM sales s
       JOIN products p ON p.id = s.product_id
       LEFT JOIN categories c ON c.id = p.category_id
+      ${mpJoin}
       WHERE s.sale_date >= CURRENT_DATE - ($1::int * 2)
         AND s.sale_date < CURRENT_DATE - $1::int
-      ${catFilter}
+      ${catFilter} ${mpFilter}
     ),
     prev_agg AS (
       SELECT
@@ -98,8 +109,9 @@ export async function getPnL(days: number, categorySlug?: string): Promise<PnLDa
     FROM sales s
     JOIN products p ON p.id = s.product_id
     LEFT JOIN categories c ON c.id = p.category_id
+    ${mpJoin}
     WHERE s.sale_date >= CURRENT_DATE - $1::int AND s.quantity > 0
-    ${catFilter}
+    ${catFilter} ${mpFilter}
   `, params);
   const cogs = cogsRes.rows[0].cogs;
 
@@ -108,9 +120,10 @@ export async function getPnL(days: number, categorySlug?: string): Promise<PnLDa
     FROM sales s
     JOIN products p ON p.id = s.product_id
     LEFT JOIN categories c ON c.id = p.category_id
+    ${mpJoin}
     WHERE s.sale_date >= CURRENT_DATE - ($1::int * 2)
       AND s.sale_date < CURRENT_DATE - $1::int AND s.quantity > 0
-    ${catFilter}
+    ${catFilter} ${mpFilter}
   `, params);
   const prevCogs = prevCogsRes.rows[0].cogs;
 
@@ -124,7 +137,8 @@ export async function getPnL(days: number, categorySlug?: string): Promise<PnLDa
     FROM sales s
     JOIN products p ON p.id = s.product_id
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE s.sale_date >= CURRENT_DATE - $1::int ${catFilter}
+    ${mpJoin}
+    WHERE s.sale_date >= CURRENT_DATE - $1::int ${catFilter} ${mpFilter}
     GROUP BY s.sale_date ORDER BY s.sale_date
   `, params);
 
@@ -139,7 +153,8 @@ export async function getPnL(days: number, categorySlug?: string): Promise<PnLDa
     FROM sales s
     JOIN products p ON p.id = s.product_id
     LEFT JOIN categories c ON c.id = p.category_id
-    WHERE s.sale_date >= CURRENT_DATE - $1::int ${catFilter}
+    ${mpJoin}
+    WHERE s.sale_date >= CURRENT_DATE - $1::int ${catFilter} ${mpFilter}
     GROUP BY c.name, c.slug ORDER BY revenue DESC
   `, params);
 

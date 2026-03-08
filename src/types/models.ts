@@ -31,10 +31,20 @@ export interface DashboardChanges {
 
 export interface DashboardData {
   period: string;
-  kpi: DashboardKPI;
+  date_from: string | null;
+  date_to: string | null;
+  total_revenue: number;
+  total_profit: number;
+  total_orders: number;
+  total_quantity: number;
+  total_sku: number;
+  avg_order_value: number;
+  profit_margin_pct: number;
+  total_commission: number;
+  total_logistics: number;
   changes: DashboardChanges;
   by_marketplace: MarketplaceStats[];
-  top_products: TopProduct[];
+  top_products: TopProduct[] | null;
 }
 
 export interface ChartDataPoint {
@@ -249,3 +259,82 @@ export interface SalesFilters {
   page?: number;
   limit?: number;
 }
+
+// --- Sync ---
+
+export interface SyncCredential {
+  id: number;
+  slug: string;
+  name: string;
+  api_base_url: string;
+  marketplace_active: boolean;
+  credential_id: number | null;
+  credential_name: string | null;
+  client_id: string | null;
+  credential_active: boolean | null;
+  connected_at: string | null;
+  updated_at: string | null;
+  status: "connected" | "disabled" | "not_connected";
+  last_sync: {
+    id: number;
+    job_type: string;
+    status: string;
+    started_at: string | null;
+    completed_at: string | null;
+    records_processed: number;
+    error_message: string | null;
+  } | null;
+}
+
+export interface SyncHistoryItem {
+  id: number;
+  marketplace: string;
+  marketplace_name: string;
+  job_type: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  records_processed: number;
+  error_message: string | null;
+  created_at: string;
+  duration_sec: number | null;
+}
+
+export interface SyncJob {
+  id: number;
+  marketplace: string;
+  marketplace_name: string;
+  job_type: string;
+  status: string;
+  started_at?: string;
+  completed_at?: string;
+  records_processed: number;
+  error_message?: string;
+  created_at: string;
+}
+
+export interface SyncStatusResponse {
+  data: SyncJob[];
+  count: number;
+}
+
+// --- Auth ---
+
+export interface UserInfo {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  role: string;
+}
+
+// --- Compatibility aliases ---
+// These let existing page imports like "Product", "SalesResponse" etc. keep working.
+
+export type Product = ProductListItem;
+export type SaleItem = SaleRow;
+export type SalesResponse = SalesPage;
+export type InventoryItem = InventoryRow;
+export type InventoryResponse = InventoryData;
+export type NotificationAlert = Alert;
+export type NotificationsResponse = NotificationsData;

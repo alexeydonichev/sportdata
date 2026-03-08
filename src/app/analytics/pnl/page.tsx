@@ -3,10 +3,15 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import PeriodSelector from "@/components/ui/PeriodSelector";
 import CategoryFilter from "@/components/ui/CategoryFilter";
+import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
+import ExportButton from "@/components/ui/ExportButton";
 import { formatMoney, formatNumber, formatPercent, formatDate } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
-import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import {
+  AreaChart, Area, XAxis, YAxis, Tooltip,
+  ResponsiveContainer, CartesianGrid,
+} from "recharts";
 
 interface PnlData {
   period: string;
@@ -16,34 +21,89 @@ interface PnlData {
     operating_expenses: number; operating_profit: number; advertising: number;
     net_profit: number;
   };
-  margins: { gross_margin: number; operating_margin: number; net_margin: number; return_rate: number };
-  metrics: { units_sold: number; units_returned: number; active_skus: number; avg_check: number; avg_profit_per_unit: number };
+  margins: {
+    gross_margin: number; operating_margin: number;
+    net_margin: number; return_rate: number;
+  };
+  metrics: {
+    units_sold: number; units_returned: number; active_skus: number;
+    avg_check: number; avg_profit_per_unit: number;
+  };
   changes: Record<string, number>;
-  daily: { date: string; revenue: number; returns: number; commission: number; logistics: number; profit: number }[];
-  by_category: { category: string; slug: string; revenue: number; commission: number; logistics: number; cogs: number; profit: number; units: number }[];
+  daily: {
+    date: string; revenue: number; returns: number;
+    commission: number; logistics: number; profit: number;
+  }[];
+  by_category: {
+    category: string; slug: string; revenue: number;
+    commission: number; logistics: number; cogs: number;
+    profit: number; units: number;
+  }[];
 }
 
 function Change({ value, invert }: { value?: number; invert?: boolean }) {
   if (value === undefined || value === null) return null;
   const positive = invert ? value < 0 : value > 0;
-  const color = value === 0 ? "text-text-tertiary" : positive ? "text-accent-green" : "text-accent-red";
+  const color =
+    value === 0
+      ? "text-text-tertiary"
+      : positive
+      ? "text-accent-green"
+      : "text-accent-red";
   return (
-    <span className={"inline-flex items-center gap-0.5 text-xs font-medium tabular-nums " + color}>
-      {value > 0 ? <TrendingUp className="h-3 w-3" /> : value < 0 ? <TrendingDown className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
-      {value > 0 ? "+" : ""}{value.toFixed(1)}%
+    <span
+      className={
+        "inline-flex items-center gap-0.5 text-xs font-medium tabular-nums " + color
+      }
+    >
+      {value > 0 ? (
+        <TrendingUp className="h-3 w-3" />
+      ) : value < 0 ? (
+        <TrendingDown className="h-3 w-3" />
+      ) : (
+        <Minus className="h-3 w-3" />
+      )}
+      {value > 0 ? "+" : ""}
+      {value.toFixed(1)}%
     </span>
   );
 }
 
-function PnlRow({ label, value, change, indent, bold, invert, border }: {
-  label: string; value: number; change?: number; indent?: boolean; bold?: boolean; invert?: boolean; border?: boolean;
+function PnlRow({
+  label, value, change, indent, bold, invert, border,
+}: {
+  label: string; value: number; change?: number;
+  indent?: boolean; bold?: boolean; invert?: boolean; border?: boolean;
 }) {
   return (
-    <div className={"flex items-center justify-between py-3 " + (border ? "border-t border-border-default" : "border-t border-border-subtle") + (indent ? " pl-6" : "")}>
-      <span className={"text-sm " + (bold ? "font-semibold text-text-primary" : "text-text-secondary")}>{label}</span>
+    <div
+      className={
+        "flex items-center justify-between py-3 " +
+        (border
+          ? "border-t border-border-default"
+          : "border-t border-border-subtle") +
+        (indent ? " pl-6" : "")
+      }
+    >
+      <span
+        className={
+          "text-sm " +
+          (bold ? "font-semibold text-text-primary" : "text-text-secondary")
+        }
+      >
+        {label}
+      </span>
       <div className="flex items-center gap-4">
         <Change value={change} invert={invert} />
-        <span className={"tabular-nums text-sm min-w-[100px] text-right " + (bold ? "font-semibold" : "font-medium") + (value < 0 ? " text-accent-red" : "")}>{formatMoney(value)}</span>
+        <span
+          className={
+            "tabular-nums text-sm min-w-[100px] text-right " +
+            (bold ? "font-semibold" : "font-medium") +
+            (value < 0 ? " text-accent-red" : "")
+          }
+        >
+          {formatMoney(value)}
+        </span>
       </div>
     </div>
   );
@@ -59,17 +119,40 @@ export default function PnlPage() {
   const [data, setData] = useState<PnlData | null>(null);
   const [period, setPeriod] = useState("30d");
   const [category, setCategory] = useState("");
+  const [marketplace, setMarketplace] = useState("all");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
     const qs = new URLSearchParams({ period });
-    if (category) qs.set("category", category);
-    api.request<PnlData>("/api/v1/analytics/pnl?" + qs.toString())
+    if (category && category !== "all") qs.set("category", category);
+    if (marketplace && marketplace !== "all") qs.set("marketplace", marketplace);
+    api
+      .request<PnlData>("/api/v1/analytics/pnl?" + qs.toString())
       .then(setData)
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [period, category]);
+  }, [period, category, marketplace]);
+
+  const exportHeaders = [
+    "Показатель", "Значение", "Изменение %",
+  ];
+  const getExportRows = () => {
+    if (!data) return [];
+    const p = data.pnl;
+    const c = data.changes;
+    return [
+      ["Валовая выручка", String(p.gross_revenue), String(c.gross_revenue ?? "")],
+      ["Возвраты", String(-p.returns_amount), ""],
+      ["Чистая выручка", String(p.net_revenue), String(c.net_revenue ?? "")],
+      ["Себестоимость", String(-p.cogs), String(c.cogs ?? "")],
+      ["Валовая прибыль", String(p.gross_profit), String(c.gross_profit ?? "")],
+      ["Комиссия МП", String(-p.commission), String(c.commission ?? "")],
+      ["Логистика", String(-p.logistics), String(c.logistics ?? "")],
+      ["Операционная прибыль", String(p.operating_profit), String(c.operating_profit ?? "")],
+      ["Чистая прибыль", String(p.net_profit), String(c.net_profit ?? "")],
+    ];
+  };
 
   return (
     <AppLayout>
@@ -79,9 +162,14 @@ export default function PnlPage() {
           <p className="text-sm text-text-tertiary mt-0.5">Прибыли и убытки</p>
         </div>
         <div className="flex items-center gap-3">
-          <CategoryFilter value={category} onChange={setCategory} />
+          <ExportButton filename="pnl" headers={exportHeaders} getRows={getExportRows} />
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>
+      </div>
+
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
+        <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
+        <CategoryFilter value={category} onChange={setCategory} />
       </div>
 
       {loading ? (
@@ -90,30 +178,46 @@ export default function PnlPage() {
         </div>
       ) : data ? (
         <div className="space-y-6 animate-fade-in">
-          {/* Margin Cards */}
           <div className="grid grid-cols-4 gap-4">
             <div className="rounded-xl border border-border-subtle bg-surface-1 p-5">
-              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">Валовая маржа</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{formatPercent(data.margins.gross_margin)}</p>
+              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+                Валовая маржа
+              </p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                {formatPercent(data.margins.gross_margin)}
+              </p>
             </div>
             <div className="rounded-xl border border-border-subtle bg-surface-1 p-5">
-              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">Операц. маржа</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{formatPercent(data.margins.operating_margin)}</p>
+              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+                Операц. маржа
+              </p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                {formatPercent(data.margins.operating_margin)}
+              </p>
             </div>
             <div className="rounded-xl border border-border-subtle bg-surface-1 p-5">
-              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">Чистая маржа</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">{formatPercent(data.margins.net_margin)}</p>
+              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+                Чистая маржа
+              </p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                {formatPercent(data.margins.net_margin)}
+              </p>
             </div>
             <div className="rounded-xl border border-border-subtle bg-surface-1 p-5">
-              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">% Возвратов</p>
-              <p className="mt-2 text-2xl font-semibold tabular-nums text-accent-amber">{formatPercent(data.margins.return_rate)}</p>
+              <p className="text-xs font-medium text-text-secondary uppercase tracking-wider">
+                % Возвратов
+              </p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums text-accent-amber">
+                {formatPercent(data.margins.return_rate)}
+              </p>
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-6">
-            {/* P&L Statement */}
             <div className="col-span-2 rounded-2xl border border-border-subtle bg-surface-1 p-6">
-              <h3 className="text-sm font-medium text-text-secondary mb-2">Отчёт о прибылях и убытках</h3>
+              <h3 className="text-sm font-medium text-text-secondary mb-2">
+                Отчёт о прибылях и убытках
+              </h3>
               <div>
                 <PnlRow label="Валовая выручка" value={data.pnl.gross_revenue} change={data.changes.gross_revenue} bold />
                 <PnlRow label="Возвраты" value={-data.pnl.returns_amount} indent />
@@ -129,7 +233,6 @@ export default function PnlPage() {
               </div>
             </div>
 
-            {/* Sidebar */}
             <div className="space-y-4">
               <div className="rounded-2xl border border-border-subtle bg-surface-1 p-6">
                 <h3 className="text-sm font-medium text-text-secondary mb-4">Ключевые метрики</h3>
@@ -178,11 +281,10 @@ export default function PnlPage() {
             </div>
           </div>
 
-          {/* Chart */}
           <div className="rounded-2xl border border-border-subtle bg-surface-1 p-6">
             <h3 className="text-sm font-medium text-text-secondary mb-4">Динамика P&L по дням</h3>
             <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={data.daily.map(d => ({ ...d, label: formatDate(d.date) }))} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+              <AreaChart data={data.daily.map((d) => ({ ...d, label: formatDate(d.date) }))} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <defs>
                   <linearGradient id="gPnlRev" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#F97316" stopOpacity={0.15} /><stop offset="100%" stopColor="#F97316" stopOpacity={0} /></linearGradient>
                   <linearGradient id="gPnlProf" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#22C55E" stopOpacity={0.15} /><stop offset="100%" stopColor="#22C55E" stopOpacity={0} /></linearGradient>
@@ -197,7 +299,6 @@ export default function PnlPage() {
             </ResponsiveContainer>
           </div>
 
-          {/* By Category */}
           <div className="rounded-2xl border border-border-subtle bg-surface-1 p-6">
             <h3 className="text-sm font-medium text-text-secondary mb-4">P&L по категориям</h3>
             <div className="overflow-x-auto">
@@ -240,7 +341,9 @@ export default function PnlPage() {
           </div>
         </div>
       ) : (
-        <div className="text-center py-20 text-text-tertiary">Не удалось загрузить данные</div>
+        <div className="text-center py-20 text-text-tertiary">
+          Не удалось загрузить данные
+        </div>
       )}
     </AppLayout>
   );

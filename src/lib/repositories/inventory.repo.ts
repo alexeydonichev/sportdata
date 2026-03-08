@@ -1,14 +1,10 @@
 import pool from "@/lib/db";
 import type { InventoryRow, InventorySummary, InventoryData } from "@/types/models";
 
-// ============================================================
-// Inventory Repository
-// ============================================================
-
-/**
- * Остатки с расчётом дней запаса
- */
-export async function getInventory(category?: string): Promise<InventoryData> {
+export async function getInventory(
+  category?: string,
+  marketplace?: string
+): Promise<InventoryData> {
   const conditions: string[] = [];
   const params: string[] = [];
   let idx = 0;
@@ -19,7 +15,17 @@ export async function getInventory(category?: string): Promise<InventoryData> {
     params.push(category);
   }
 
+  const needMpJoin = !!(marketplace && marketplace !== "all");
+  if (needMpJoin) {
+    idx++;
+    conditions.push(`mp.slug = $${idx}`);
+    params.push(marketplace!);
+  }
+
   const where = conditions.length > 0 ? "AND " + conditions.join(" AND ") : "";
+  const mpJoin = needMpJoin
+    ? "JOIN marketplaces mp ON mp.id = i.marketplace_id"
+    : "";
 
   const itemsResult = await pool.query(
     `SELECT
@@ -38,6 +44,7 @@ export async function getInventory(category?: string): Promise<InventoryData> {
     FROM inventory i
     JOIN products p ON p.id = i.product_id
     JOIN categories c ON c.id = p.category_id
+    ${mpJoin}
     LEFT JOIN (
       SELECT product_id, SUM(quantity)::float / 30 AS avg_daily
       FROM sales
@@ -57,6 +64,7 @@ export async function getInventory(category?: string): Promise<InventoryData> {
     FROM inventory i
     JOIN products p ON p.id = i.product_id
     JOIN categories c ON c.id = p.category_id
+    ${mpJoin}
     WHERE i.quantity > 0 ${where}`,
     params
   );

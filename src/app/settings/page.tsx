@@ -413,9 +413,9 @@ export default function SettingsPage() {
                     </div>
                     <button
                       onClick={() => item.setter(!item.value)}
-                      className={"relative w-10 h-[22px] rounded-full transition-colors " + (item.value ? "bg-accent-green" : "bg-surface-3")}
+                      className={"relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors " + (item.value ? "bg-accent-green" : "bg-surface-3")}
                     >
-                      <span className={"absolute top-[2px] w-[18px] h-[18px] rounded-full bg-white shadow transition-transform " + (item.value ? "translate-x-[20px]" : "translate-x-[2px]")} />
+                      <span className={"inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform " + (item.value ? "translate-x-[18px]" : "translate-x-[3px]")} />
                     </button>
                   </div>
                 ))}

@@ -1,20 +1,28 @@
 import pool from "@/lib/db";
 import type { Alert, NotificationsData } from "@/types/models";
 
-// ============================================================
-// Notifications Repository
-// ============================================================
-
-/**
- * Генерирует алерты на основе текущих данных
- */
-export async function getNotifications(): Promise<NotificationsData> {
+export async function getNotifications(marketplace?: string): Promise<NotificationsData> {
   const alerts: Alert[] = [];
   const now = new Date().toISOString();
+  const hasMP = !!(marketplace && marketplace !== "all");
+
+  const mpParams: string[] = hasMP ? [marketplace] : [];
+
+  const mpProductCond = hasMP
+    ? `AND p.id IN (
+        SELECT DISTINCT s_mp.product_id FROM sales s_mp
+        JOIN marketplaces mp ON mp.id = s_mp.marketplace_id
+        WHERE mp.slug = $${mpParams.length}
+      )`
+    : "";
+
+  const mpSalesCond = hasMP
+    ? `AND s.marketplace_id = (SELECT id FROM marketplaces WHERE slug = $${mpParams.length})`
+    : "";
 
   // 1. Critical stock (≤ 7 days)
-  const criticalStock = await pool.query(`
-    WITH daily_sales AS (
+  const criticalStock = await pool.query(
+    `WITH daily_sales AS (
       SELECT product_id, COALESCE(AVG(daily_qty), 0) AS avg_daily
       FROM (
         SELECT product_id, sale_date, SUM(quantity) AS daily_qty
@@ -40,9 +48,11 @@ export async function getNotifications(): Promise<NotificationsData> {
     WHERE COALESCE(i.total_stock, 0) > 0
       AND COALESCE(ds.avg_daily, 0) > 0
       AND FLOOR(COALESCE(i.total_stock, 0) / ds.avg_daily) <= 7
+      ${mpProductCond}
     ORDER BY days_left ASC
-    LIMIT 20
-  `);
+    LIMIT 20`,
+    mpParams
+  );
 
   for (const row of criticalStock.rows) {
     const days = Math.floor(row.days_left);
@@ -62,8 +72,8 @@ export async function getNotifications(): Promise<NotificationsData> {
   }
 
   // 2. Low stock (8–21 days)
-  const lowStock = await pool.query(`
-    WITH daily_sales AS (
+  const lowStock = await pool.query(
+    `WITH daily_sales AS (
       SELECT product_id, COALESCE(AVG(daily_qty), 0) AS avg_daily
       FROM (
         SELECT product_id, sale_date, SUM(quantity) AS daily_qty
@@ -87,9 +97,11 @@ export async function getNotifications(): Promise<NotificationsData> {
     WHERE COALESCE(i.total_stock, 0) > 0
       AND COALESCE(ds.avg_daily, 0) > 0
       AND FLOOR(COALESCE(i.total_stock, 0) / ds.avg_daily) BETWEEN 8 AND 21
+      ${mpProductCond}
     ORDER BY days_left ASC
-    LIMIT 10
-  `);
+    LIMIT 10`,
+    mpParams
+  );
 
   for (const row of lowStock.rows) {
     alerts.push({
@@ -108,21 +120,24 @@ export async function getNotifications(): Promise<NotificationsData> {
   }
 
   // 3. Sales anomalies
-  const salesAnomalies = await pool.query(`
-    WITH weekly_current AS (
-      SELECT product_id, SUM(revenue)::float AS current_revenue, SUM(quantity)::int AS current_qty
-      FROM sales WHERE sale_date >= CURRENT_DATE - 7
-      GROUP BY product_id
+  const salesAnomalies = await pool.query(
+    `WITH weekly_current AS (
+      SELECT s.product_id, SUM(s.revenue)::float AS current_revenue
+      FROM sales s
+      WHERE s.sale_date >= CURRENT_DATE - 7
+        ${mpSalesCond}
+      GROUP BY s.product_id
     ),
     weekly_avg AS (
-      SELECT product_id, AVG(week_revenue)::float AS avg_revenue, AVG(week_qty)::float AS avg_qty
+      SELECT product_id, AVG(week_revenue)::float AS avg_revenue
       FROM (
-        SELECT product_id,
-          DATE_TRUNC('week', sale_date) AS week,
-          SUM(revenue) AS week_revenue, SUM(quantity) AS week_qty
-        FROM sales
-        WHERE sale_date >= CURRENT_DATE - 35 AND sale_date < CURRENT_DATE - 7
-        GROUP BY product_id, DATE_TRUNC('week', sale_date)
+        SELECT s.product_id,
+          DATE_TRUNC('week', s.sale_date) AS week,
+          SUM(s.revenue) AS week_revenue
+        FROM sales s
+        WHERE s.sale_date >= CURRENT_DATE - 35 AND s.sale_date < CURRENT_DATE - 7
+          ${mpSalesCond}
+        GROUP BY s.product_id, DATE_TRUNC('week', s.sale_date)
       ) w
       GROUP BY product_id HAVING COUNT(*) >= 2
     )
@@ -138,8 +153,9 @@ export async function getNotifications(): Promise<NotificationsData> {
     WHERE wa.avg_revenue > 100
       AND ABS((wc.current_revenue - wa.avg_revenue) / wa.avg_revenue) > 0.5
     ORDER BY ABS((wc.current_revenue - wa.avg_revenue) / wa.avg_revenue) DESC
-    LIMIT 10
-  `);
+    LIMIT 10`,
+    mpParams
+  );
 
   for (const row of salesAnomalies.rows) {
     const pct = Math.round(row.change_pct);
@@ -160,8 +176,8 @@ export async function getNotifications(): Promise<NotificationsData> {
   }
 
   // 4. High return rate
-  const highReturns = await pool.query(`
-    SELECT
+  const highReturns = await pool.query(
+    `SELECT
       p.id::text AS product_id, p.name, p.sku,
       SUM(CASE WHEN s.quantity < 0 THEN ABS(s.quantity) ELSE 0 END)::int AS returns,
       SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END)::int AS sold,
@@ -172,13 +188,15 @@ export async function getNotifications(): Promise<NotificationsData> {
     FROM sales s
     JOIN products p ON p.id = s.product_id
     WHERE s.sale_date >= CURRENT_DATE - 30
+      ${mpSalesCond}
     GROUP BY p.id, p.name, p.sku
     HAVING SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END) >= 10
       AND (SUM(CASE WHEN s.quantity < 0 THEN ABS(s.quantity) ELSE 0 END)::float /
            NULLIF(SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END), 0) * 100) > 10
     ORDER BY return_pct DESC
-    LIMIT 10
-  `);
+    LIMIT 10`,
+    mpParams
+  );
 
   for (const row of highReturns.rows) {
     const pct = Math.round(row.return_pct);
@@ -197,8 +215,7 @@ export async function getNotifications(): Promise<NotificationsData> {
     });
   }
 
-  // Sort by severity
-  const severityOrder = { critical: 0, warning: 1, info: 2 };
+  const severityOrder: Record<string, number> = { critical: 0, warning: 1, info: 2 };
   alerts.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
 
   return {

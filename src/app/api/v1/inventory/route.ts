@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { inventoryRepo } from "@/lib/repositories";
 
 export async function GET(req: NextRequest) {
-  const category = req.nextUrl.searchParams.get("category") || undefined;
+  const sp = req.nextUrl.searchParams;
+  const category = sp.get("category") || undefined;
+  const marketplace = sp.get("marketplace") || undefined;
 
   try {
-    const data = await inventoryRepo.getInventory(category);
+    const data = await inventoryRepo.getInventory(category, marketplace);
     return NextResponse.json(data);
   } catch (e: unknown) {
     console.error("Inventory error:", e);
