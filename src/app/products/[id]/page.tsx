@@ -151,8 +151,8 @@ export default function ProductDetailPage() {
                   {data.inventory.items.length > 0 && (
                     <div className="border-t border-border-subtle pt-3 space-y-2">
                       <p className="text-xs text-text-tertiary uppercase tracking-wider">По складам:</p>
-                      {data.inventory.items.map((w) => (
-                        <div key={w.warehouse} className="flex justify-between text-xs">
+                      {data.inventory.items.map((w, idx) => (
+                        <div key={`${w.warehouse}-${idx}`} className="flex justify-between text-xs">
                           <span className="text-text-secondary truncate max-w-[140px]">{w.warehouse}</span>
                           <span className="font-medium tabular-nums">{formatNumber(w.stock)}</span>
                         </div>
