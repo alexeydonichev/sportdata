@@ -1,26 +1,89 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@theme {
+  --color-surface-0: #0A0A0A;
+  --color-surface-1: #111111;
+  --color-surface-2: #171717;
+  --color-surface-3: #1C1C1C;
+  --color-surface-4: #222222;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-border-subtle: #1E1E1E;
+  --color-border-default: #2A2A2A;
+  --color-border-strong: #383838;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  --color-text-primary: #F5F5F5;
+  --color-text-secondary: #8A8A8A;
+  --color-text-tertiary: #5A5A5A;
+  --color-text-inverse: #0A0A0A;
+
+  --color-accent-white: #FFFFFF;
+  --color-accent-green: #22C55E;
+  --color-accent-red: #EF4444;
+  --color-accent-amber: #F59E0B;
+
+  --color-mp-wb: #CB11AB;
+  --color-mp-ozon: #005BFF;
+  --color-mp-ym: #FFCC00;
+  --color-mp-avito: #00AAFF;
+
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", monospace;
+
+  --animate-fade-in: fadeIn 0.3s ease-out;
+  --animate-slide-up: slideUp 0.3s ease-out;
+
+  @keyframes fadeIn {
+    0% { opacity: 0; }
+    100% { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.light {
+  --color-surface-0: #FFFFFF;
+  --color-surface-1: #F8F8F8;
+  --color-surface-2: #F0F0F0;
+  --color-surface-3: #E8E8E8;
+  --color-surface-4: #E0E0E0;
+  --color-border-subtle: #F0F0F0;
+  --color-border-default: #E0E0E0;
+  --color-border-strong: #CCCCCC;
+  --color-text-primary: #111111;
+  --color-text-secondary: #666666;
+  --color-text-tertiary: #999999;
+  --color-text-inverse: #FFFFFF;
+  --color-accent-white: #111111;
 }
+
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
+  transition: background-color 0.2s, color 0.2s;
+}
+
+::selection { background-color: rgba(0, 0, 0, 0.15); }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border-default); border-radius: 9999px; }
+input, select, textarea { outline: none; }
+
+.text-metric {
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tabular-nums { font-variant-numeric: tabular-nums; }
