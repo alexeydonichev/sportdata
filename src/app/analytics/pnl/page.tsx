@@ -19,6 +19,7 @@ interface PnlData {
     gross_revenue: number; returns_amount: number; net_revenue: number;
     cogs: number; gross_profit: number; commission: number; logistics: number;
     operating_expenses: number; operating_profit: number; advertising: number;
+    for_pay: number;
     net_profit: number;
   };
   margins: {
@@ -29,6 +30,7 @@ interface PnlData {
     units_sold: number; units_returned: number; active_skus: number;
     avg_check: number; avg_profit_per_unit: number;
   };
+  warnings: string[];
   changes: Record<string, number>;
   daily: {
     date: string; revenue: number; returns: number;
@@ -213,6 +215,19 @@ export default function PnlPage() {
             </div>
           </div>
 
+          {data.warnings && data.warnings.length > 0 && (
+            <div className="space-y-2">
+              {data.warnings.map((w, i) => (
+                <div key={i} className="flex items-start gap-3 rounded-xl border border-accent-amber/30 bg-accent-amber/5 px-4 py-3">
+                  <svg className="h-5 w-5 text-accent-amber shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                  <p className="text-sm text-text-secondary">{w}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="grid grid-cols-3 gap-6">
             <div className="col-span-2 rounded-2xl border border-border-subtle bg-surface-1 p-6">
               <h3 className="text-sm font-medium text-text-secondary mb-2">
@@ -227,6 +242,7 @@ export default function PnlPage() {
                 <PnlRow label="Комиссия маркетплейса" value={-data.pnl.commission} change={data.changes.commission} invert indent />
                 <PnlRow label="Логистика" value={-data.pnl.logistics} change={data.changes.logistics} invert indent />
                 <PnlRow label="Операционная прибыль" value={data.pnl.operating_profit} change={data.changes.operating_profit} bold border />
+                <PnlRow label="К выплате от МП" value={data.pnl.for_pay || 0} indent />
                 <div className="mt-2 pt-3 border-t-2 border-border-strong">
                   <PnlRow label="ЧИСТАЯ ПРИБЫЛЬ" value={data.pnl.net_profit} change={data.changes.net_profit} bold />
                 </div>

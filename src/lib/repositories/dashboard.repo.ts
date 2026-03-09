@@ -46,7 +46,15 @@ function buildFilters(
 }
 
 /**
- * KPI + сравнение с предыдущим периодом
+ * KPI + comparison with previous period
+ * 
+ * HONEST METRICS:
+ * - revenue = finishedPrice from WB (real sale price)
+ * - for_pay = what WB pays to seller (real)
+ * - commission = revenue - for_pay (real WB commission)
+ * - logistics_cost = 0 (WB sales API doesn't provide per-sale logistics)
+ * - net_profit = for_pay - (cost_price * quantity)
+ *   If cost_price = 0 (not filled), net_profit = for_pay
  */
 export async function getKPI(
   days: number,
@@ -69,15 +77,17 @@ export async function getKPI(
     `
     WITH current_period AS (
       SELECT
-        COALESCE(SUM(s.revenue), 0)::float       AS total_revenue,
-        COALESCE(SUM(s.net_profit), 0)::float     AS total_profit,
-        COALESCE(SUM(s.quantity), 0)::int         AS total_quantity,
-        COUNT(*)::int                             AS total_orders,
-        COUNT(DISTINCT s.product_id)::int         AS total_sku,
-        COALESCE(SUM(s.commission), 0)::float     AS total_commission,
-        COALESCE(SUM(s.logistics_cost), 0)::float AS total_logistics,
-        MIN(s.sale_date)::text                    AS date_from,
-        MAX(s.sale_date)::text                    AS date_to
+        COALESCE(SUM(s.revenue), 0)::float                          AS total_revenue,
+        COALESCE(SUM(s.for_pay), 0)::float                          AS total_for_pay,
+        COALESCE(SUM(s.for_pay - COALESCE(p.cost_price, 0) * s.quantity), 0)::float AS total_profit,
+        COALESCE(SUM(s.quantity), 0)::int                            AS total_quantity,
+        COUNT(*)::int                                                AS total_orders,
+        COUNT(DISTINCT s.product_id)::int                            AS total_sku,
+        COALESCE(SUM(s.revenue - s.for_pay), 0)::float               AS total_commission,
+        COALESCE(SUM(s.logistics_cost), 0)::float                    AS total_logistics,
+        COALESCE(SUM(COALESCE(p.cost_price, 0) * s.quantity), 0)::float AS total_cogs,
+        MIN(s.sale_date)::text                                       AS date_from,
+        MAX(s.sale_date)::text                                       AS date_to
       FROM sales s
       ${catMpJoin}
       WHERE s.sale_date >= CURRENT_DATE - $1::int
@@ -85,13 +95,14 @@ export async function getKPI(
     ),
     previous_period AS (
       SELECT
-        COALESCE(SUM(s.revenue), 0)::float       AS total_revenue,
-        COALESCE(SUM(s.net_profit), 0)::float     AS total_profit,
-        COALESCE(SUM(s.quantity), 0)::int         AS total_quantity,
-        COUNT(*)::int                             AS total_orders,
-        COUNT(DISTINCT s.product_id)::int         AS total_sku,
-        COALESCE(SUM(s.commission), 0)::float     AS total_commission,
-        COALESCE(SUM(s.logistics_cost), 0)::float AS total_logistics
+        COALESCE(SUM(s.revenue), 0)::float                          AS total_revenue,
+        COALESCE(SUM(s.for_pay), 0)::float                          AS total_for_pay,
+        COALESCE(SUM(s.for_pay - COALESCE(p.cost_price, 0) * s.quantity), 0)::float AS total_profit,
+        COALESCE(SUM(s.quantity), 0)::int                            AS total_quantity,
+        COUNT(*)::int                                                AS total_orders,
+        COUNT(DISTINCT s.product_id)::int                            AS total_sku,
+        COALESCE(SUM(s.revenue - s.for_pay), 0)::float               AS total_commission,
+        COALESCE(SUM(s.logistics_cost), 0)::float                    AS total_logistics
       FROM sales s
       ${catMpJoin}
       WHERE s.sale_date >= CURRENT_DATE - ($1::int * 2)
@@ -101,6 +112,7 @@ export async function getKPI(
     SELECT
       c.*,
       p.total_revenue    AS prev_revenue,
+      p.total_for_pay    AS prev_for_pay,
       p.total_profit     AS prev_profit,
       p.total_quantity   AS prev_quantity,
       p.total_orders     AS prev_orders,
@@ -115,10 +127,10 @@ export async function getKPI(
   const m = rows[0];
   const avgOrder = m.total_orders > 0 ? m.total_revenue / m.total_orders : 0;
   const prevAvgOrder = m.prev_orders > 0 ? m.prev_revenue / m.prev_orders : 0;
-  const marginPct =
-    m.total_revenue > 0 ? (m.total_profit / m.total_revenue) * 100 : 0;
-  const prevMarginPct =
-    m.prev_revenue > 0 ? (m.prev_profit / m.prev_revenue) * 100 : 0;
+  
+  // Margin based on real profit (for_pay - cogs) / revenue
+  const marginPct = m.total_revenue > 0 ? (m.total_profit / m.total_revenue) * 100 : 0;
+  const prevMarginPct = m.prev_revenue > 0 ? (m.prev_profit / m.prev_revenue) * 100 : 0;
 
   const kpi: DashboardKPI = {
     total_revenue: m.total_revenue,
@@ -149,7 +161,7 @@ export async function getKPI(
 }
 
 /**
- * Данные для графика по дням
+ * Chart data by day
  */
 export async function getChart(
   days: number,
@@ -172,7 +184,7 @@ export async function getChart(
     SELECT
       s.sale_date::text                      AS date,
       COALESCE(SUM(s.revenue), 0)::float     AS revenue,
-      COALESCE(SUM(s.net_profit), 0)::float  AS profit,
+      COALESCE(SUM(s.for_pay), 0)::float     AS profit,
       COUNT(*)::int                          AS orders,
       COALESCE(SUM(s.quantity), 0)::int      AS quantity
     FROM sales s
@@ -188,7 +200,7 @@ export async function getChart(
 }
 
 /**
- * Разбивка по маркетплейсам
+ * Breakdown by marketplace
  */
 export async function getByMarketplace(
   days: number,
@@ -215,7 +227,7 @@ export async function getByMarketplace(
       mp.slug                              AS marketplace,
       mp.name,
       COALESCE(SUM(s.revenue), 0)::float   AS revenue,
-      COALESCE(SUM(s.net_profit), 0)::float AS profit,
+      COALESCE(SUM(s.for_pay), 0)::float   AS profit,
       COALESCE(SUM(s.quantity), 0)::int    AS quantity
     FROM sales s
     JOIN marketplaces mp ON mp.id = s.marketplace_id
@@ -236,7 +248,7 @@ export async function getByMarketplace(
 }
 
 /**
- * Топ товаров по выручке
+ * Top products by revenue
  */
 export async function getTopProducts(
   days: number,
@@ -274,7 +286,7 @@ export async function getTopProducts(
       p.sku,
       COALESCE(SUM(s.revenue), 0)::float     AS revenue,
       COALESCE(SUM(s.quantity), 0)::int      AS quantity,
-      COALESCE(SUM(s.net_profit), 0)::float  AS profit
+      COALESCE(SUM(s.for_pay), 0)::float     AS profit
     FROM sales s
     JOIN products p ON p.id = s.product_id
     JOIN categories c ON c.id = p.category_id

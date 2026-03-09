@@ -12,6 +12,7 @@ export interface PnLData {
     operating_expenses: number;
     operating_profit: number;
     advertising: number;
+    for_pay: number;
     net_profit: number;
   };
   margins: {
@@ -27,9 +28,10 @@ export interface PnLData {
     avg_check: number;
     avg_profit_per_unit: number;
   };
+  warnings: string[];
   changes: Record<string, number>;
   daily: { date: string; revenue: number; returns: number; commission: number; logistics: number; profit: number }[];
-  by_category: { category: string; slug: string; revenue: number; commission: number; logistics: number; cogs: number; profit: number; units: number }[];
+  by_category: { category: string; slug: string; revenue: number; commission: number; logistics: number; cogs: number; profit: number; units: number; margin_pct: number }[];
 }
 
 function pctChange(cur: number, prev: number): number {
@@ -55,9 +57,11 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
     mpFilter = `AND mp.slug = $${params.length}`;
   }
 
+  // Main aggregation — use commission column directly (filled by Report Detail)
+  // Fallback: if commission column is 0, calculate from revenue - for_pay
   const pnlRes = await pool.query(`
     WITH filtered_sales AS (
-      SELECT s.*
+      SELECT s.*, COALESCE(p.cost_price, 0) AS product_cost
       FROM sales s
       JOIN products p ON p.id = s.product_id
       LEFT JOIN categories c ON c.id = p.category_id
@@ -70,16 +74,22 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
         COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END), 0)::float AS gross_revenue,
         COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(revenue) ELSE 0 END), 0)::float AS returns_amount,
         COALESCE(SUM(revenue), 0)::float AS net_revenue,
-        COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0)::float AS commission,
-        COALESCE(SUM(CASE WHEN quantity > 0 THEN logistics_cost ELSE 0 END), 0)::float AS logistics,
+        -- Use commission column; if all zeros, fallback to revenue - for_pay
+        CASE 
+          WHEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0) > 0 
+          THEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0)::float
+          ELSE COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue - for_pay ELSE 0 END), 0)::float
+        END AS commission,
+        COALESCE(SUM(logistics_cost), 0)::float AS logistics,
+        COALESCE(SUM(CASE WHEN quantity > 0 THEN product_cost * quantity ELSE 0 END), 0)::float AS cogs,
+        COALESCE(SUM(for_pay), 0)::float AS total_for_pay,
         COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0)::int AS units_sold,
         COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END), 0)::int AS units_returned,
-        COUNT(DISTINCT CASE WHEN quantity > 0 THEN product_id END)::int AS active_skus,
-        COALESCE(SUM(net_profit), 0)::float AS net_profit
+        COUNT(DISTINCT CASE WHEN quantity > 0 THEN product_id END)::int AS active_skus
       FROM filtered_sales
     ),
     prev_sales AS (
-      SELECT s.*
+      SELECT s.*, COALESCE(p.cost_price, 0) AS product_cost
       FROM sales s
       JOIN products p ON p.id = s.product_id
       LEFT JOIN categories c ON c.id = p.category_id
@@ -92,48 +102,36 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
       SELECT
         COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END), 0)::float AS gross_revenue,
         COALESCE(SUM(revenue), 0)::float AS net_revenue,
-        COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0)::float AS commission,
-        COALESCE(SUM(CASE WHEN quantity > 0 THEN logistics_cost ELSE 0 END), 0)::float AS logistics,
-        COALESCE(SUM(net_profit), 0)::float AS net_profit
+        CASE 
+          WHEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0) > 0 
+          THEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0)::float
+          ELSE COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue - for_pay ELSE 0 END), 0)::float
+        END AS commission,
+        COALESCE(SUM(logistics_cost), 0)::float AS logistics,
+        COALESCE(SUM(CASE WHEN quantity > 0 THEN product_cost * quantity ELSE 0 END), 0)::float AS cogs,
+        COALESCE(SUM(for_pay), 0)::float AS total_for_pay
       FROM prev_sales
     )
     SELECT c.*, p.gross_revenue AS prev_gross_revenue, p.net_revenue AS prev_net_revenue,
-      p.commission AS prev_commission, p.logistics AS prev_logistics, p.net_profit AS prev_net_profit
+      p.commission AS prev_commission, p.logistics AS prev_logistics,
+      p.cogs AS prev_cogs, p.total_for_pay AS prev_for_pay
     FROM current_agg c, prev_agg p
   `, params);
 
   const m = pnlRes.rows[0];
 
-  const cogsRes = await pool.query(`
-    SELECT COALESCE(SUM(p.cost_price * s.quantity), 0)::float AS cogs
-    FROM sales s
-    JOIN products p ON p.id = s.product_id
-    LEFT JOIN categories c ON c.id = p.category_id
-    ${mpJoin}
-    WHERE s.sale_date >= CURRENT_DATE - $1::int AND s.quantity > 0
-    ${catFilter} ${mpFilter}
-  `, params);
-  const cogs = cogsRes.rows[0].cogs;
-
-  const prevCogsRes = await pool.query(`
-    SELECT COALESCE(SUM(p.cost_price * s.quantity), 0)::float AS cogs
-    FROM sales s
-    JOIN products p ON p.id = s.product_id
-    LEFT JOIN categories c ON c.id = p.category_id
-    ${mpJoin}
-    WHERE s.sale_date >= CURRENT_DATE - ($1::int * 2)
-      AND s.sale_date < CURRENT_DATE - $1::int AND s.quantity > 0
-    ${catFilter} ${mpFilter}
-  `, params);
-  const prevCogs = prevCogsRes.rows[0].cogs;
-
+  // Daily breakdown
   const dailyRes = await pool.query(`
     SELECT s.sale_date::text AS date,
       COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue ELSE 0 END), 0)::float AS revenue,
       COALESCE(SUM(CASE WHEN s.quantity < 0 THEN ABS(s.revenue) ELSE 0 END), 0)::float AS returns,
-      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0)::float AS commission,
-      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.logistics_cost ELSE 0 END), 0)::float AS logistics,
-      COALESCE(SUM(s.net_profit), 0)::float AS profit
+      CASE 
+        WHEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0) > 0
+        THEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0)::float
+        ELSE COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue - s.for_pay ELSE 0 END), 0)::float
+      END AS commission,
+      COALESCE(SUM(s.logistics_cost), 0)::float AS logistics,
+      COALESCE(SUM(s.for_pay), 0)::float AS profit
     FROM sales s
     JOIN products p ON p.id = s.product_id
     LEFT JOIN categories c ON c.id = p.category_id
@@ -142,13 +140,18 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
     GROUP BY s.sale_date ORDER BY s.sale_date
   `, params);
 
+  // By category
   const byCatRes = await pool.query(`
-    SELECT COALESCE(c.name, 'Without category') AS category, COALESCE(c.slug, 'none') AS slug,
+    SELECT COALESCE(c.name, 'Без категории') AS category, COALESCE(c.slug, 'none') AS slug,
       COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue ELSE 0 END), 0)::float AS revenue,
-      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0)::float AS commission,
-      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.logistics_cost ELSE 0 END), 0)::float AS logistics,
-      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN p.cost_price * s.quantity ELSE 0 END), 0)::float AS cogs,
-      COALESCE(SUM(s.net_profit), 0)::float AS profit,
+      CASE 
+        WHEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0) > 0
+        THEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0)::float
+        ELSE COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue - s.for_pay ELSE 0 END), 0)::float
+      END AS commission,
+      COALESCE(SUM(s.logistics_cost), 0)::float AS logistics,
+      COALESCE(SUM(CASE WHEN s.quantity > 0 THEN COALESCE(p.cost_price, 0) * s.quantity ELSE 0 END), 0)::float AS cogs,
+      COALESCE(SUM(s.for_pay), 0)::float AS profit,
       COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END), 0)::int AS units
     FROM sales s
     JOIN products p ON p.id = s.product_id
@@ -158,16 +161,41 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
     GROUP BY c.name, c.slug ORDER BY revenue DESC
   `, params);
 
+  const cogs = m.cogs;
   const grossProfit = m.net_revenue - cogs;
-  const operatingProfit = grossProfit - m.commission - m.logistics;
+  const operatingExpenses = m.commission + m.logistics;
+  const operatingProfit = grossProfit - operatingExpenses;
+  // net_profit = for_pay - cogs - logistics (what seller really earns after all deductions)
+  const netProfit = m.total_for_pay - cogs - m.logistics;
+
   const grossMargin = m.gross_revenue > 0 ? (grossProfit / m.gross_revenue) * 100 : 0;
   const operatingMargin = m.gross_revenue > 0 ? (operatingProfit / m.gross_revenue) * 100 : 0;
-  const netMargin = m.gross_revenue > 0 ? (m.net_profit / m.gross_revenue) * 100 : 0;
+  const netMargin = m.gross_revenue > 0 ? (netProfit / m.gross_revenue) * 100 : 0;
   const returnRate = m.units_sold > 0 ? (m.units_returned / (m.units_sold + m.units_returned)) * 100 : 0;
   const avgCheck = m.units_sold > 0 ? m.gross_revenue / m.units_sold : 0;
-  const avgProfit = m.units_sold > 0 ? m.net_profit / m.units_sold : 0;
-  const prevGrossProfit = m.prev_net_revenue - prevCogs;
+  const avgProfit = m.units_sold > 0 ? netProfit / m.units_sold : 0;
+
+  const prevGrossProfit = m.prev_net_revenue - m.prev_cogs;
   const prevOperating = prevGrossProfit - m.prev_commission - m.prev_logistics;
+  const prevNetProfit = m.prev_for_pay - m.prev_cogs - m.prev_logistics;
+
+  // Warnings
+  const warnings: string[] = [];
+  if (cogs === 0) {
+    warnings.push("Себестоимость товаров не заполнена (0 ₽). Прибыль считается без учёта себестоимости. Заполните себестоимость в разделе «Товары».");
+  }
+  if (m.logistics === 0) {
+    warnings.push("Логистика = 0 ₽. Запустите синхронизацию — данные подтягиваются из отчёта WB (reportDetailByPeriod). Отчёт может быть доступен с задержкой 1–3 дня.");
+  }
+
+  // by_category with margin
+  interface CatRow { category: string; slug: string; revenue: number; commission: number; logistics: number; cogs: number; profit: number; units: number }
+  const byCategory = (byCatRes.rows as CatRow[]).map((cat) => ({
+    ...cat,
+    margin_pct: cat.revenue > 0
+      ? parseFloat(((cat.profit / cat.revenue) * 100).toFixed(1))
+      : 0,
+  }));
 
   return {
     pnl: {
@@ -178,10 +206,11 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
       gross_profit: grossProfit,
       commission: m.commission,
       logistics: m.logistics,
-      operating_expenses: m.commission + m.logistics,
+      operating_expenses: operatingExpenses,
       operating_profit: operatingProfit,
       advertising: 0,
-      net_profit: m.net_profit,
+      for_pay: m.total_for_pay,
+      net_profit: netProfit,
     },
     margins: {
       gross_margin: parseFloat(grossMargin.toFixed(1)),
@@ -196,17 +225,18 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
       avg_check: parseFloat(avgCheck.toFixed(0)),
       avg_profit_per_unit: parseFloat(avgProfit.toFixed(0)),
     },
+    warnings,
     changes: {
       gross_revenue: pctChange(m.gross_revenue, m.prev_gross_revenue),
       net_revenue: pctChange(m.net_revenue, m.prev_net_revenue),
-      cogs: pctChange(cogs, prevCogs),
+      cogs: pctChange(cogs, m.prev_cogs),
       gross_profit: pctChange(grossProfit, prevGrossProfit),
       commission: pctChange(m.commission, m.prev_commission),
       logistics: pctChange(m.logistics, m.prev_logistics),
       operating_profit: pctChange(operatingProfit, prevOperating),
-      net_profit: pctChange(m.net_profit, m.prev_net_profit),
+      net_profit: pctChange(netProfit, prevNetProfit),
     },
     daily: dailyRes.rows,
-    by_category: byCatRes.rows,
+    by_category: byCategory,
   };
 }

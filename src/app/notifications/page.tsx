@@ -27,9 +27,11 @@ const SEVERITY_STYLES: Record<string, string> = {
 };
 
 type FilterType = "all" | "stock" | "sales" | "returns";
+type SeverityFilter = "all" | "critical" | "warning";
 
 export default function NotificationsPage() {
   const [filter, setFilter] = useState<FilterType>("all");
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [marketplace, setMarketplace] = useState("all");
 
   const { data, loading, error, refresh, refreshing } = useApiQuery<NotificationsResponse>(
@@ -41,18 +43,22 @@ export default function NotificationsPage() {
     [marketplace]
   );
 
+  const toggleSeverity = (s: SeverityFilter) => {
+    setSeverityFilter((prev) => (prev === s ? "all" : s));
+  };
+
   const filtered = useMemo(() => {
     if (!data) return [];
     return data.alerts.filter((a: NotificationAlert) => {
-      if (filter === "all") return true;
-      if (filter === "stock") return a.type === "stock_critical" || a.type === "stock_low";
-      if (filter === "sales") return a.type === "sales_spike" || a.type === "sales_drop";
-      if (filter === "returns") return a.type === "high_returns";
+      if (filter === "stock" && a.type !== "stock_critical" && a.type !== "stock_low") return false;
+      if (filter === "sales" && a.type !== "sales_spike" && a.type !== "sales_drop") return false;
+      if (filter === "returns" && a.type !== "high_returns") return false;
+      if (severityFilter !== "all" && a.severity !== severityFilter) return false;
       return true;
     });
-  }, [data, filter]);
+  }, [data, filter, severityFilter]);
 
-  const filters: { key: FilterType; label: string; icon: typeof Bell; count: number }[] = [
+  const typeFilters: { key: FilterType; label: string; icon: typeof Bell; count: number }[] = [
     { key: "all", label: "Все", icon: Bell, count: data?.summary.total || 0 },
     { key: "stock", label: "Остатки", icon: Package, count: data?.alerts.filter((a: NotificationAlert) => a.type.startsWith("stock")).length || 0 },
     { key: "sales", label: "Продажи", icon: TrendingUp, count: data?.alerts.filter((a: NotificationAlert) => a.type.startsWith("sales")).length || 0 },
@@ -68,7 +74,7 @@ export default function NotificationsPage() {
           </h1>
           <p className="text-sm text-text-tertiary mt-0.5">
             {data ? (
-              <>{data.summary.total} алертов{data.summary.critical > 0 && <span className="text-accent-red ml-1">· {data.summary.critical} критических</span>}</>
+              <>{data.summary.total} алертов{data.summary.critical > 0 && <span className="text-accent-red ml-1">&middot; {data.summary.critical} критических</span>}</>
             ) : "Анализ данных..."}
           </p>
         </div>
@@ -80,24 +86,52 @@ export default function NotificationsPage() {
 
       {data && (
         <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className={"rounded-xl border p-4 " + (data.summary.critical > 0 ? "border-accent-red/30 bg-accent-red/5" : "border-border-subtle bg-surface-1")}>
+          <button
+            onClick={() => toggleSeverity("critical")}
+            className={
+              "rounded-xl border p-4 text-left transition-all cursor-pointer " +
+              (severityFilter === "critical"
+                ? "border-accent-red bg-accent-red/10 ring-2 ring-accent-red/30"
+                : data.summary.critical > 0
+                  ? "border-accent-red/30 bg-accent-red/5 hover:border-accent-red/50"
+                  : "border-border-subtle bg-surface-1 hover:border-border-default")
+            }
+          >
             <div className="flex items-center gap-2 text-xs font-medium mb-1">
               <AlertCircle className={"h-3.5 w-3.5 " + (data.summary.critical > 0 ? "text-accent-red" : "text-text-tertiary")} />
               <span className={data.summary.critical > 0 ? "text-accent-red" : "text-text-secondary"}>Критические</span>
             </div>
             <p className={"text-2xl font-semibold tabular-nums " + (data.summary.critical > 0 ? "text-accent-red" : "text-text-primary")}>{data.summary.critical}</p>
-          </div>
-          <div className={"rounded-xl border p-4 " + (data.summary.warning > 0 ? "border-accent-amber/20 bg-accent-amber/5" : "border-border-subtle bg-surface-1")}>
+          </button>
+          <button
+            onClick={() => toggleSeverity("warning")}
+            className={
+              "rounded-xl border p-4 text-left transition-all cursor-pointer " +
+              (severityFilter === "warning"
+                ? "border-accent-amber bg-accent-amber/10 ring-2 ring-accent-amber/30"
+                : data.summary.warning > 0
+                  ? "border-accent-amber/20 bg-accent-amber/5 hover:border-accent-amber/40"
+                  : "border-border-subtle bg-surface-1 hover:border-border-default")
+            }
+          >
             <div className="flex items-center gap-2 text-xs font-medium mb-1">
               <AlertTriangle className={"h-3.5 w-3.5 " + (data.summary.warning > 0 ? "text-accent-amber" : "text-text-tertiary")} />
               <span className={data.summary.warning > 0 ? "text-accent-amber" : "text-text-secondary"}>Предупреждения</span>
             </div>
             <p className={"text-2xl font-semibold tabular-nums " + (data.summary.warning > 0 ? "text-accent-amber" : "text-text-primary")}>{data.summary.warning}</p>
-          </div>
-          <div className="rounded-xl border border-accent-green/20 bg-accent-green/5 p-4">
+          </button>
+          <button
+            onClick={() => setSeverityFilter("all")}
+            className={
+              "rounded-xl border p-4 text-left transition-all cursor-pointer " +
+              (severityFilter === "all"
+                ? "border-accent-green bg-accent-green/10 ring-2 ring-accent-green/30"
+                : "border-accent-green/20 bg-accent-green/5 hover:border-accent-green/40")
+            }
+          >
             <div className="flex items-center gap-2 text-xs font-medium text-accent-green mb-1"><Bell className="h-3.5 w-3.5" />Всего алертов</div>
             <p className="text-2xl font-semibold tabular-nums text-text-primary">{data.summary.total}</p>
-          </div>
+          </button>
         </div>
       )}
 
@@ -105,28 +139,38 @@ export default function NotificationsPage() {
         <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
         <div className="h-6 w-px bg-border-subtle" />
         <div className="flex items-center gap-2">
-          {filters.map((f) => {
+          {typeFilters.map((f) => {
             const Icon = f.icon;
             return (
               <button key={f.key} onClick={() => setFilter(f.key)}
                 className={"flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border " +
-                  (filter === f.key ? "bg-accent-white text-text-inverse border-accent-white" : "bg-surface-1 text-text-secondary border-border-default hover:border-border-strong hover:text-text-primary")}>
+                  (filter === f.key ? "bg-text-primary text-surface-0 border-text-primary" : "bg-surface-1 text-text-secondary border-border-default hover:border-border-strong hover:text-text-primary")}>
                 <Icon className="h-3 w-3" />{f.label}
                 {f.count > 0 && (
                   <span className={"ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold " +
-                    (filter === f.key ? "bg-text-inverse/20 text-text-inverse" : "bg-surface-3 text-text-tertiary")}>{f.count}</span>
+                    (filter === f.key ? "bg-white/20 text-surface-0" : "bg-surface-3 text-text-tertiary")}>{f.count}</span>
                 )}
               </button>
             );
           })}
         </div>
+        {severityFilter !== "all" && (
+          <button
+            onClick={() => setSeverityFilter("all")}
+            className="text-xs text-text-tertiary hover:text-text-primary transition-colors underline underline-offset-2"
+          >
+            Сбросить фильтр
+          </button>
+        )}
       </div>
 
       {loading ? <Spinner /> : error ? <ErrorState message={error} onRetry={refresh} /> : filtered.length === 0 ? (
         <div className="text-center py-20">
           <Bell className="h-10 w-10 text-text-tertiary mx-auto mb-3 opacity-30" />
           <p className="text-text-tertiary text-sm">Нет уведомлений</p>
-          <p className="text-text-tertiary text-xs mt-1">Всё в порядке! 🎉</p>
+          <p className="text-text-tertiary text-xs mt-1">
+            {severityFilter !== "all" || filter !== "all" ? "Попробуйте сбросить фильтры" : "Все в порядке!"}
+          </p>
         </div>
       ) : (
         <div className="space-y-3 animate-fade-in">

@@ -4,23 +4,26 @@ export function cn(...inputs: ClassValue[]) {
   return clsx(inputs);
 }
 
-export function formatMoney(value: number): string {
-  if (value === 0) return "0 ₽";
-  if (Math.abs(value) >= 1000000) {
-    return (value / 1000000).toFixed(1).replace(".", ",") + " млн ₽";
+export function formatMoney(value: number | null | undefined): string {
+  const v = value ?? 0;
+  if (v === 0) return "0 ₽";
+  if (Math.abs(v) >= 1000000) {
+    return (v / 1000000).toFixed(1).replace(".", ",") + " млн ₽";
   }
-  if (Math.abs(value) >= 1000) {
-    return (value / 1000).toFixed(1).replace(".", ",") + " тыс ₽";
+  if (Math.abs(v) >= 1000) {
+    return (v / 1000).toFixed(1).replace(".", ",") + " тыс ₽";
   }
-  return value.toLocaleString("ru-RU") + " ₽";
+  return v.toLocaleString("ru-RU") + " ₽";
 }
 
-export function formatNumber(value: number): string {
-  return value.toLocaleString("ru-RU");
+export function formatNumber(value: number | null | undefined): string {
+  const v = value ?? 0;
+  return v.toLocaleString("ru-RU");
 }
 
-export function formatPercent(value: number): string {
-  return value.toFixed(1).replace(".", ",") + "%";
+export function formatPercent(value: number | null | undefined): string {
+  const v = value ?? 0;
+  return v.toFixed(1).replace(".", ",") + "%";
 }
 
 export function formatDate(date: string): string {

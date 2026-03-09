@@ -3,7 +3,7 @@ import { mpColors } from "@/lib/utils";
 
 const MARKETPLACES = [
   { slug: "all", label: "Все МП" },
-  { slug: "wb", label: "Wildberries" },
+  { slug: "wildberries", label: "Wildberries" },
   { slug: "ozon", label: "Ozon" },
   { slug: "yandex_market", label: "Яндекс Маркет" },
 ];

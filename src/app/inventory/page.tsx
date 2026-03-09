@@ -12,6 +12,8 @@ import type { InventoryResponse, InventoryItem } from "@/types/models";
 import { formatNumber } from "@/lib/utils";
 import { AlertTriangle, CheckCircle, Clock } from "lucide-react";
 
+type StockStatus = "all" | "critical" | "low" | "ok";
+
 function stockBadge(days: number) {
   if (days <= 7)
     return { color: "text-accent-red bg-accent-red/10", icon: AlertTriangle, label: "Критично" };
@@ -20,9 +22,16 @@ function stockBadge(days: number) {
   return { color: "text-accent-green bg-accent-green/10", icon: CheckCircle, label: "Норма" };
 }
 
+function getStockStatus(days: number): StockStatus {
+  if (days <= 7) return "critical";
+  if (days <= 21) return "low";
+  return "ok";
+}
+
 export default function InventoryPage() {
   const [category, setCategory] = useState("all");
   const [marketplace, setMarketplace] = useState("all");
+  const [stockFilter, setStockFilter] = useState<StockStatus>("all");
 
   const { data, loading, error, refresh } = useApiQuery<InventoryResponse>(
     () => api.inventory({ category, marketplace }),
@@ -38,12 +47,22 @@ export default function InventoryPage() {
     };
   }, [data]);
 
+  const filteredItems = useMemo(() => {
+    const items = data?.items || [];
+    if (stockFilter === "all") return items;
+    return items.filter((i: InventoryItem) => getStockStatus(i.days_of_stock) === stockFilter);
+  }, [data, stockFilter]);
+
+  const toggleFilter = (status: StockStatus) => {
+    setStockFilter((prev) => (prev === status ? "all" : status));
+  };
+
   const exportHeaders = [
     "Товар", "SKU", "Категория", "Склад", "Остаток",
     "Продажи/день", "Хватит на (дней)", "Статус",
   ];
   const getExportRows = () =>
-    (data?.items || []).map((item: InventoryItem) => [
+    filteredItems.map((item: InventoryItem) => [
       item.name, item.sku, item.category, item.warehouse,
       String(item.stock), String(item.avg_daily_sales.toFixed(1)),
       String(item.days_of_stock >= 999 ? "999+" : item.days_of_stock),
@@ -67,32 +86,64 @@ export default function InventoryPage() {
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="rounded-xl border border-accent-red/20 bg-accent-red/5 p-4">
+        <button
+          onClick={() => toggleFilter("critical")}
+          className={
+            "rounded-xl border p-4 text-left transition-all " +
+            (stockFilter === "critical"
+              ? "border-accent-red bg-accent-red/10 ring-2 ring-accent-red/30"
+              : "border-accent-red/20 bg-accent-red/5 hover:border-accent-red/40")
+          }
+        >
           <div className="flex items-center gap-2 text-accent-red text-xs font-medium mb-1">
             <AlertTriangle className="h-3.5 w-3.5" />
             {"Критично (≤ 7 дней)"}
           </div>
           <p className="text-2xl font-semibold tabular-nums text-accent-red">{counts.critical}</p>
-        </div>
-        <div className="rounded-xl border border-accent-amber/20 bg-accent-amber/5 p-4">
+        </button>
+        <button
+          onClick={() => toggleFilter("low")}
+          className={
+            "rounded-xl border p-4 text-left transition-all " +
+            (stockFilter === "low"
+              ? "border-accent-amber bg-accent-amber/10 ring-2 ring-accent-amber/30"
+              : "border-accent-amber/20 bg-accent-amber/5 hover:border-accent-amber/40")
+          }
+        >
           <div className="flex items-center gap-2 text-accent-amber text-xs font-medium mb-1">
             <Clock className="h-3.5 w-3.5" />
             {"Мало (8–21 день)"}
           </div>
           <p className="text-2xl font-semibold tabular-nums text-accent-amber">{counts.low}</p>
-        </div>
-        <div className="rounded-xl border border-accent-green/20 bg-accent-green/5 p-4">
+        </button>
+        <button
+          onClick={() => toggleFilter("ok")}
+          className={
+            "rounded-xl border p-4 text-left transition-all " +
+            (stockFilter === "ok"
+              ? "border-accent-green bg-accent-green/10 ring-2 ring-accent-green/30"
+              : "border-accent-green/20 bg-accent-green/5 hover:border-accent-green/40")
+          }
+        >
           <div className="flex items-center gap-2 text-accent-green text-xs font-medium mb-1">
             <CheckCircle className="h-3.5 w-3.5" />
             {"Норма (22+ дней)"}
           </div>
           <p className="text-2xl font-semibold tabular-nums text-accent-green">{counts.ok}</p>
-        </div>
+        </button>
       </div>
 
       <div className="flex items-center gap-4 mb-6 flex-wrap">
         <CategoryFilter value={category} onChange={setCategory} />
         <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
+        {stockFilter !== "all" && (
+          <button
+            onClick={() => setStockFilter("all")}
+            className="text-xs text-text-tertiary hover:text-text-primary transition-colors underline underline-offset-2"
+          >
+            Сбросить фильтр статуса
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -115,7 +166,7 @@ export default function InventoryPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border-subtle">
-                {data.items.map((item: InventoryItem, i: number) => {
+                {filteredItems.map((item: InventoryItem, i: number) => {
                   const badge = stockBadge(item.days_of_stock);
                   const Icon = badge.icon;
                   return (
@@ -142,6 +193,13 @@ export default function InventoryPage() {
                     </tr>
                   );
                 })}
+                {filteredItems.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-12 text-center text-text-tertiary text-sm">
+                      Нет товаров с выбранным статусом
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
