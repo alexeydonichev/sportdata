@@ -14,6 +14,9 @@ export interface DashboardKPI {
   profit_margin_pct: number;
   total_commission: number;
   total_logistics: number;
+  total_penalty: number;
+  total_returns: number;
+  total_returns_quantity: number;
   date_from: string | null;
   date_to: string | null;
 }
@@ -27,6 +30,8 @@ export interface DashboardChanges {
   margin: number | null;
   commission: number | null;
   logistics: number | null;
+  penalty: number | null;
+  returns: number | null;
 }
 
 export interface DashboardData {
@@ -42,6 +47,9 @@ export interface DashboardData {
   profit_margin_pct: number;
   total_commission: number;
   total_logistics: number;
+  total_penalty: number;
+  total_returns: number;
+  total_returns_quantity: number;
   changes: DashboardChanges;
   by_marketplace: MarketplaceStats[];
   top_products: TopProduct[] | null;
@@ -77,43 +85,39 @@ export interface ProductListItem {
 
 export interface ProductDetail {
   product: {
-    id: string;
-    name: string;
-    sku: string;
-    barcode: string;
-    cost_price: number;
-    price: number;
-    category: string;
-    category_slug: string;
-    created_at: string;
+    id: string; name: string; sku: string; barcode: string;
+    cost_price: number; price: number;
+    category: string; category_slug: string; created_at: string;
+    brand: string; image_url: string | null;
+    dimensions: { width: number; height: number; length: number } | null;
+    weight_g: number | null; nm_id: number | null;
+    retail_price: number; discount_price: number;
   };
   metrics: {
-    total_revenue: number;
-    total_profit: number;
-    total_sold: number;
-    total_orders: number;
-    avg_price: number;
-    total_commission: number;
-    total_logistics: number;
-    total_returns: number;
-    margin_pct: number;
-    return_pct: number;
+    total_revenue: number; total_profit: number; total_sold: number; total_orders: number;
+    avg_price: number; total_commission: number; total_logistics: number;
+    total_returns: number; margin_pct: number; return_pct: number;
   };
-  changes: {
-    revenue: number | null;
-    profit: number | null;
-    quantity: number | null;
-    orders: number | null;
-  };
+  changes: { revenue: number | null; profit: number | null; quantity: number | null; orders: number | null };
   chart: ChartDataPoint[];
   inventory: {
     items: { warehouse: string; stock: number; updated_at: string }[];
-    total_stock: number;
-    avg_daily_sales: number;
-    days_of_stock: number;
+    total_stock: number; avg_daily_sales: number; days_of_stock: number;
   };
   abc: { grade: "A" | "B" | "C"; revenue_share: number };
   by_marketplace: MarketplaceStats[];
+  geography: {
+    by_country: { country: string; revenue: number; quantity: number }[];
+    by_warehouse: { warehouse: string; revenue: number; quantity: number }[];
+  };
+  price_history: { week: string; avg_price: number; avg_for_pay: number }[];
+  finance: {
+    revenue: number; for_pay: number; commission: number; logistics: number;
+    penalty: number; acquiring: number; storage: number; deduction: number;
+    acceptance: number; return_logistics: number; additional_payment: number;
+    returns_amount: number; avg_spp_pct: number; avg_commission_pct: number;
+    cogs: number; net_profit: number;
+  };
 }
 
 // --- Sales ---
@@ -338,3 +342,49 @@ export type InventoryItem = InventoryRow;
 export type InventoryResponse = InventoryData;
 export type NotificationAlert = Alert;
 export type NotificationsResponse = NotificationsData;
+
+// --- Returns Analytics ---
+
+export interface ReturnsAnalytics {
+  summary: {
+    total_returns: number;
+    total_sales: number;
+    return_rate: number;
+    return_amount: number;
+    return_logistics: number;
+    lost_profit: number;
+  };
+  changes: {
+    returns: number;
+    return_rate: number;
+    return_amount: number;
+  };
+  daily: {
+    date: string;
+    sales: number;
+    returns: number;
+    return_rate: number;
+  }[];
+  by_product: {
+    product_id: number;
+    name: string;
+    sku: string;
+    category: string;
+    sales_qty: number;
+    return_qty: number;
+    return_rate: number;
+    return_amount: number;
+    return_logistics: number;
+  }[];
+  by_category: {
+    category: string;
+    return_qty: number;
+    return_rate: number;
+    return_amount: number;
+  }[];
+  by_warehouse: {
+    warehouse: string;
+    return_qty: number;
+    return_amount: number;
+  }[];
+}

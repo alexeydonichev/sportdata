@@ -1,121 +1,94 @@
-import pool from "@/lib/db";
-import { decrypt } from "@/lib/crypto";
+function filterWbRows(rows){
+  return rows.filter(r =>
+    r &&
+    (r.saleID || r.nmId || r.supplierArticle || r.barcode) &&
+    (r.date || r.lastChangeDate)
+  );
+}
+
+import { normalizeWbSale } from './wb-normalize';
+const WB_INITIAL_DELAY=5000;
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+const WB_CONCURRENCY = 2;
+import { copySales } from "./pg-copy";
+import https from "https";
+import pool from "./db";
+import { Agent } from "undici";
+import { decrypt } from "./crypto";
+
+
 
 const WB_STATS_API = "https://statistics-api.wildberries.ru";
 const WB_CONTENT_API = "https://content-api.wildberries.ru";
 
-interface WBSale {
-  date: string;
-  supplierArticle: string;
-  barcode: string;
-  totalPrice: number;
-  discountPercent: number;
-  forPay: number;
-  finishedPrice: number;
-  priceWithDisc: number;
-  saleID: string;
-  spp: number;
-  nmId: number;
-  subject: string;
-  brand: string;
-  IsStorno: number;
-  warehouseName: string;
-}
+const dispatcher = new Agent({
+  connections: 5
+});
 
-interface WBStock {
-  supplierArticle: string;
-  barcode: string;
-  quantity: number;
-  warehouseName: string;
-  nmId: number;
-  subject: string;
-  brand: string;
-  Price: number;
-  Discount: number;
-}
+const agent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 10
+});
 
-interface WBOrder {
-  date: string;
-  supplierArticle: string;
-  barcode: string;
-  totalPrice: number;
-  discountPercent: number;
-  finishedPrice: number;
-  priceWithDisc: number;
-  nmId: number;
-  subject: string;
-  brand: string;
-  isCancel: boolean;
-  cancelDate: string;
-  warehouseName: string;
-}
 
-interface WBCardListResponse {
-  cards: {
-    nmID: number;
-    vendorCode: string;
-    title: string;
-    subjectName: string;
-    brand: string;
-    barcodes: string[];
-    sizes: { price: number; discountedPrice: number }[];
-  }[];
-  cursor: { total: number; updatedAt: string; nmID: number };
-}
+async function wbRequest<T>(
+  url: string,
+  apiKey: string,
+  options: RequestInit = {},
+  maxRetries = 5
+): Promise<T> {
 
-// WB Report Detail — содержит логистику, комиссию, штрафы
-interface WBReportDetail {
-  realizationreport_id: number;
-  rrd_id: number;
-  nm_id: number;
-  sa_name: string;           // supplierArticle
-  barcode: string;
-  subject_name: string;
-  brand_name: string;
-  doc_type_name: string;     // "Продажа" | "Возврат"
-  quantity: number;
-  retail_price: number;
-  retail_amount: number;
-  retail_price_withdisc_rub: number;
-  delivery_rub: number;              // ← ЛОГИСТИКА
-  ppvz_sales_commission: number;     // ← КОМИССИЯ WB в рублях
-  ppvz_for_pay: number;              // ← К выплате продавцу
-  penalty: number;                   // ← Штрафы
-  additional_payment: number;        // ← Доплаты
-  acquiring_fee: number;             // ← Эквайринг
-  supplier_oper_name: string;        // "Продажа" | "Логистика" | "Возврат" | ...
-  order_dt: string;
-  sale_dt: string;
-  office_name: string;
-  date_from: string;
-  date_to: string;
-}
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
 
-async function wbFetch<T>(url: string, apiKey: string): Promise<T> {
-  const res = await fetch(url, {
-    headers: { Authorization: apiKey },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`WB API ${res.status}: ${text.slice(0, 500)}`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+
+      await sleep(350+Math.random()*400);
+const res = await fetch(url, {
+        ...options,
+        headers: {
+          Authorization: apiKey,
+          "Content-Type": "application/json",
+          "User-Agent": "sportdata-sync/1.0",
+          ...(options.headers || {})
+        },
+        dispatcher,
+        signal: controller.signal
+      });
+
+      clearTimeout(timeout);
+
+      if (res.status === 429) {
+        const wait = Math.min(60 * attempt, 300);
+        console.warn(`[WB] 429 retry in ${wait}s`);
+        await sleep(wait * 1000);
+        continue;
+      }
+
+      if (res.status >= 500) {
+        await sleep(10 * attempt * 1000);
+        continue;
+      }
+
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`WB ${res.status}: ${txt}`);
+      }
+
+      return res.json();
+
+    } catch (e) {
+
+      if (attempt === maxRetries) throw e;
+
+      await sleep(5 * attempt * 1000);
+
+    }
   }
-  return res.json() as Promise<T>;
-}
 
-async function wbPost<T>(url: string, apiKey: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`WB API POST ${res.status}: ${text.slice(0, 500)}`);
-  }
-  return res.json() as Promise<T>;
+  throw new Error("WB request failed");
 }
 
 function dateNDaysAgo(n: number): string {
@@ -132,337 +105,372 @@ function toSlug(name: string): string {
     .slice(0, 50);
 }
 
-async function getWBCredentials(): Promise<{ apiKey: string; marketplaceId: number }> {
-  const { rows } = await pool.query(
-    `SELECT mc.api_key_encrypted, mc.marketplace_id
-     FROM marketplace_credentials mc
-     JOIN marketplaces m ON m.id = mc.marketplace_id
-     WHERE m.slug = 'wildberries' AND mc.is_active = true
-     LIMIT 1`
-  );
-  if (rows.length === 0) throw new Error("WB credentials not found");
+async function getWBCredentials() {
+
+  const { rows } = await pool.query(`
+    SELECT mc.api_key_encrypted, mc.marketplace_id
+    FROM marketplace_credentials mc
+    JOIN marketplaces m ON m.id = mc.marketplace_id
+    WHERE m.slug = 'wildberries'
+    AND mc.is_active = true
+    LIMIT 1
+  `);
+
+  if (!rows.length) throw new Error("WB credentials not found");
+
   return {
-    apiKey: decrypt(rows[0].api_key_encrypted),
-    marketplaceId: rows[0].marketplace_id,
+    apiKey: rows[0].api_key_encrypted,
+    marketplaceId: rows[0].marketplace_id
   };
+
 }
 
-async function ensureCategory(subjectName: string): Promise<number> {
-  if (!subjectName) subjectName = "Другое";
-  const slug = toSlug(subjectName);
-  const { rows: existing } = await pool.query("SELECT id FROM categories WHERE slug = $1", [slug]);
-  if (existing.length > 0) return existing[0].id;
-  const { rows: inserted } = await pool.query(
-    "INSERT INTO categories (slug, name) VALUES ($1, $2) ON CONFLICT (slug) DO UPDATE SET name = $2 RETURNING id",
-    [slug, subjectName]
+const categoryCache = new Map<string, number>();
+const productCache = new Map<string, number>();
+
+async function ensureCategoryBatch(names: string[]) {
+
+  const unique = [...new Set(names.map(n => n || "Другое"))];
+
+  const slugs = unique.map(toSlug);
+
+  const { rows } = await pool.query(
+    `SELECT id, slug FROM categories WHERE slug = ANY($1)`,
+    [slugs]
   );
-  return inserted[0].id;
-}
 
-async function ensureProduct(
-  sku: string, name: string, barcode: string | null, categoryId: number
-): Promise<number> {
-  const { rows: existing } = await pool.query("SELECT id FROM products WHERE sku = $1", [sku]);
-  if (existing.length > 0) {
-    await pool.query(
-      `UPDATE products SET name = $2, barcode = COALESCE($3, barcode), category_id = $4, updated_at = NOW() WHERE id = $1`,
-      [existing[0].id, name, barcode, categoryId]
-    );
-    return existing[0].id;
+  for (const r of rows) {
+    categoryCache.set(r.slug, r.id);
   }
-  const { rows: inserted } = await pool.query(
-    `INSERT INTO products (name, sku, barcode, cost_price, category_id) VALUES ($1, $2, $3, 0, $4) RETURNING id`,
-    [name, sku, barcode, categoryId]
-  );
-  return inserted[0].id;
+
+  const missing = unique.filter(n => !categoryCache.has(toSlug(n)));
+
+  if (!missing.length) return;
+
+  const values: any[] = [];
+  const ph: string[] = [];
+
+  let p = 1;
+
+  for (const name of missing) {
+
+    ph.push(`($${p},$${p+1})`);
+
+    values.push(
+      toSlug(name),
+      name
+    );
+
+    p += 2;
+
+  }
+
+  const ins = await pool.query(`
+    INSERT INTO categories (slug,name)
+    VALUES ${ph.join(",")}
+        RETURNING id, slug
+  `, values);
+
+  for (const r of ins.rows) {
+    categoryCache.set(r.slug, r.id);
+  }
+
 }
 
-// ============================================================
-// SALES SYNC — from /api/v1/supplier/sales
-// ============================================================
-async function syncSales(apiKey: string, marketplaceId: number, daysBack: number = 30): Promise<number> {
-  const dateFrom = dateNDaysAgo(daysBack);
-  const url = `${WB_STATS_API}/api/v1/supplier/sales?dateFrom=${dateFrom}`;
-  const sales = await wbFetch<WBSale[]>(url, apiKey);
-  if (!sales || sales.length === 0) return 0;
+async function ensureProductBatch(
+  items: { sku: string; name: string; barcode: string | null; subjectName: string; nmId: number; brand?: string }[]
+) {
+
+  const uniqueNm = [...new Set(items.map(i => i.nmId).filter(Boolean))];
+
+  const { rows } = await pool.query(
+    `SELECT id, nm_id, sku FROM products WHERE nm_id = ANY($1)`,
+    [uniqueNm]
+  );
+
+  for (const r of rows) {
+    productCache.set(`nm_${r.nm_id}`, r.id);
+    productCache.set(`sku_${r.sku}`, r.id);
+  }
+
+  const insertRows = [];
+
+  for (const item of items) {
+
+    if (!item.nmId) continue;
+    if (productCache.has(`nm_${item.nmId}`)) continue;
+
+    const catId = categoryCache.get(toSlug(item.subjectName || "Другое"));
+    if (!catId) continue;
+
+    insertRows.push({
+      name: item.name,
+      sku: item.sku,
+      barcode: item.barcode,
+      nmId: item.nmId,
+      brand: item.brand || null,
+      categoryId: catId
+    });
+
+  }
+
+  if (!insertRows.length) return;
+
+  const values: any[] = [];
+  const ph: string[] = [];
+
+  let p = 1;
+
+  for (const r of insertRows) {
+
+    ph.push(`($${p},$${p+1},$${p+2},0,$${p+3},$${p+4},$${p+5})`);
+
+    values.push(
+      r.name,
+      r.sku,
+      r.barcode,
+      r.categoryId,
+      r.nmId,
+      r.brand
+    );
+
+    p += 6;
+
+  }
+
+  const ins = await pool.query(`
+    INSERT INTO products
+    (name,sku,barcode,cost_price,category_id,nm_id,brand)
+    VALUES ${ph.join(",")}
+    ON CONFLICT (nm_id)
+    DO UPDATE SET
+      name = EXCLUDED.name,
+      sku = EXCLUDED.sku,
+      barcode = COALESCE(EXCLUDED.barcode,products.barcode),
+      category_id = EXCLUDED.category_id,
+      brand = COALESCE(EXCLUDED.brand,products.brand),
+      updated_at = NOW()
+    RETURNING id,nm_id,sku
+  `, values);
+
+  for (const r of ins.rows) {
+    productCache.set(`nm_${r.nm_id}`, r.id);
+    productCache.set(`sku_${r.sku}`, r.id);
+  }
+
+}
+
+function getProductId(nmId: number, sku?: string): number | null {
+
+  if (nmId && productCache.has(`nm_${nmId}`)) {
+    return productCache.get(`nm_${nmId}`)!;
+  }
+
+  if (sku && productCache.has(`sku_${sku}`)) {
+    return productCache.get(`sku_${sku}`)!;
+  }
+
+  return null;
+
+}
+
+async function syncSales(apiKey: string, marketplaceId: number, daysBack = 90) {
+
+  const url =
+    `${WB_STATS_API}/api/v1/supplier/sales?dateFrom=${dateNDaysAgo(365)}`;
+
+  const sales = await wbRequest<any[]>(url, apiKey);
+
+const copyRows = sales.map(s =>
+  [
+    (s.sale_id ?? 0),
+    s.date ?? 0,
+    (s.sku ?? 0),
+    s.quantity ?? 0,
+    s.price ?? 0
+  ].join("\t")
+);
+
+await copySales(copyRows);
+
+
+  if (!sales || !sales.length) return 0;
+
+  await ensureCategoryBatch(sales.map(s => s.subject || "Другое"));
+
+  await ensureProductBatch(
+    Array.from(new Map(sales.map(s => [s.nmId, {
+      sku: s.supplierArticle || String(s.nmId),
+      name: s.subject || s.supplierArticle,
+      barcode: s.barcode,
+      subjectName: s.subject,
+      nmId: s.nmId,
+      brand: s.brand
+    }])).values())
+);
+
+  const BATCH = 2000;
 
   let synced = 0;
 
-  for (const sale of sales) {
-    if (sale.IsStorno === 1) continue;
+  for (let i = 0; i < sales.length; i += BATCH) {
 
-    const sku = sale.supplierArticle || String(sale.nmId);
-    const categoryId = await ensureCategory(sale.subject);
-    const productId = await ensureProduct(sku, sale.subject || sku, sale.barcode, categoryId);
+    const batch = sales.slice(i, i + BATCH);
 
-    const saleDate = sale.date.split("T")[0];
-    const revenue = sale.priceWithDisc || sale.finishedPrice || 0;
-    const forPay = sale.forPay || 0;
-    const commission = Math.max(revenue - forPay, 0);
-    const netProfit = forPay;
+    const values: any[] = [];
+    const ph: string[] = [];
 
-    await pool.query(
-      `INSERT INTO sales (product_id, marketplace_id, sale_date, quantity, revenue, for_pay, net_profit, commission, logistics_cost)
-       VALUES ($1, $2, $3, 1, $4, $5, $6, $7, 0)
-       ON CONFLICT DO NOTHING`,
-      [productId, marketplaceId, saleDate, revenue, forPay, netProfit, commission]
-    );
-    synced++;
-  }
+    let p = 1;
 
-  return synced;
-}
+    for (const s of batch) {
 
-// ============================================================
-// REPORT DETAIL SYNC — gets logistics, commissions, penalties
-// WB API: GET /api/v5/supplier/reportDetailByPeriod
-// This is the MAIN source for accurate P&L data
-// ============================================================
-async function syncReportDetail(apiKey: string, marketplaceId: number, daysBack: number = 30): Promise<number> {
-  const dateFrom = dateNDaysAgo(daysBack);
-  const dateTo = new Date().toISOString().split("T")[0];
+      if (s.IsStorno === 1) continue;
 
-  // WB Report API uses rrdid for pagination
-  let rrdid = 0;
-  let totalProcessed = 0;
-  const logisticsByProductDate = new Map<string, number>();
-  const commissionByProductDate = new Map<string, number>();
-  const penaltiesByProductDate = new Map<string, number>();
+      const pid = getProductId(s.nmId, s.supplierArticle);
+      if (!pid) continue;
 
-  console.log(`[WB Report] Fetching detail report ${dateFrom} → ${dateTo}...`);
+      const rev = s.priceWithDisc || s.finishedPrice || 0;
+      const fp = s.forPay || 0;
 
-  while (true) {
-    const url = `${WB_STATS_API}/api/v5/supplier/reportDetailByPeriod?dateFrom=${dateFrom}&dateTo=${dateTo}&rrdid=${rrdid}&limit=100000`;
-    const rows = await wbFetch<WBReportDetail[]>(url, apiKey);
+      ph.push(`($${p},$${p+1},$${p+2},1,$${p+3},$${p+4},$${p+5},$${p+6},0,$${p+7})`);
 
-    if (!rows || rows.length === 0) break;
-
-    for (const row of rows) {
-      const sku = row.sa_name || String(row.nm_id);
-      const saleDate = (row.sale_dt || row.order_dt || "").split("T")[0];
-      if (!saleDate) continue;
-
-      const key = `${sku}|${saleDate}`;
-      const operName = (row.supplier_oper_name || "").toLowerCase();
-
-      // Accumulate logistics
-      if (row.delivery_rub && row.delivery_rub > 0) {
-        logisticsByProductDate.set(key, (logisticsByProductDate.get(key) || 0) + row.delivery_rub);
-      }
-
-      // Accumulate WB commission from report (more accurate than revenue - forPay)
-      if (row.ppvz_sales_commission && row.ppvz_sales_commission > 0) {
-        // Only for sales, not logistics rows
-        if (operName.includes("продажа") || row.doc_type_name === "Продажа") {
-          commissionByProductDate.set(key, (commissionByProductDate.get(key) || 0) + row.ppvz_sales_commission);
-        }
-      }
-
-      // Penalties
-      if (row.penalty && row.penalty > 0) {
-        penaltiesByProductDate.set(key, (penaltiesByProductDate.get(key) || 0) + row.penalty);
-      }
-
-      rrdid = row.rrd_id;
-    }
-
-    totalProcessed += rows.length;
-    console.log(`[WB Report] Processed ${totalProcessed} rows (rrdid=${rrdid})...`);
-
-    if (rows.length < 100000) break;
-  }
-
-  // Now update sales rows with logistics data
-  let updated = 0;
-
-  for (const [key, logistics] of logisticsByProductDate) {
-    const [sku, saleDate] = key.split("|");
-
-    // Find product_id by sku
-    const { rows: products } = await pool.query("SELECT id FROM products WHERE sku = $1", [sku]);
-    if (products.length === 0) continue;
-    const productId = products[0].id;
-
-    // Get commission for same key
-    const commission = commissionByProductDate.get(key) || 0;
-    const penalty = penaltiesByProductDate.get(key) || 0;
-
-    // Update all sales for this product+date with proportional logistics
-    const { rows: salesRows } = await pool.query(
-      `SELECT id, revenue FROM sales 
-       WHERE product_id = $1 AND sale_date = $2 AND marketplace_id = $3`,
-      [productId, saleDate, marketplaceId]
-    );
-
-    if (salesRows.length === 0) continue;
-
-    // Distribute logistics evenly across sales on that date
-    const logisticsPerSale = logistics / salesRows.length;
-    const penaltyPerSale = penalty / salesRows.length;
-
-    for (const sale of salesRows) {
-      // Update logistics_cost; optionally update commission from report
-      const updateFields: string[] = [];
-      const updateValues: (number | string)[] = [];
-      let paramIdx = 1;
-
-      updateFields.push(`logistics_cost = $${paramIdx}`);
-      updateValues.push(parseFloat(logisticsPerSale.toFixed(2)));
-      paramIdx++;
-
-      // If we have commission data from report, use it (more accurate)
-      if (commission > 0 && salesRows.length > 0) {
-        const commPerSale = commission / salesRows.length;
-        updateFields.push(`commission = $${paramIdx}`);
-        updateValues.push(parseFloat(commPerSale.toFixed(2)));
-        paramIdx++;
-      }
-
-      // Recalculate net_profit = for_pay - logistics - penalty
-      updateFields.push(`net_profit = for_pay - $${paramIdx} - $${paramIdx + 1}`);
-      updateValues.push(parseFloat(logisticsPerSale.toFixed(2)));
-      updateValues.push(parseFloat(penaltyPerSale.toFixed(2)));
-      paramIdx += 2;
-
-      updateValues.push(sale.id);
-
-      await pool.query(
-        `UPDATE sales SET ${updateFields.join(", ")} WHERE id = $${paramIdx}`,
-        updateValues
+      values.push(
+        pid,
+        marketplaceId,
+        s.date.split("T")[0],
+        rev,
+        fp,
+        fp,
+        Math.max(rev - fp, 0),
+        s.saleID || null
       );
-      updated++;
-    }
-  }
 
-  // Also handle logistics rows that don't have matching sales
-  // (WB charges logistics even for returns, storage, etc.)
-  console.log(`[WB Report] Updated ${updated} sales with logistics data from ${totalProcessed} report rows`);
-  console.log(`[WB Report] Unique product-dates with logistics: ${logisticsByProductDate.size}`);
-
-  return totalProcessed;
-}
-
-async function syncCards(apiKey: string): Promise<number> {
-  let synced = 0;
-  let cursor = { updatedAt: "", nmID: 0 };
-  const limit = 100;
-
-  while (true) {
-    const body: Record<string, unknown> = {
-      settings: {
-        cursor: { limit },
-        filter: { withPhoto: -1 },
-      },
-    };
-    if (cursor.updatedAt) {
-      (body.settings as Record<string, unknown>).cursor = {
-        limit, updatedAt: cursor.updatedAt, nmID: cursor.nmID,
-      };
-    }
-
-    const data = await wbPost<WBCardListResponse>(
-      `${WB_CONTENT_API}/content/v2/get/cards/list`, apiKey, body
-    );
-    if (!data.cards || data.cards.length === 0) break;
-
-    for (const card of data.cards) {
-      const sku = card.vendorCode || String(card.nmID);
-      const name = card.title || sku;
-      const barcode = card.barcodes?.[0] || null;
-      const categoryId = await ensureCategory(card.subjectName);
-      await ensureProduct(sku, name, barcode, categoryId);
+      p += 8;
       synced++;
+
     }
 
-    if (data.cards.length < limit) break;
-    cursor = { updatedAt: data.cursor.updatedAt, nmID: data.cursor.nmID };
+    if (ph.length) {
+
+      await pool.query(`
+        INSERT INTO sales
+        (product_id,marketplace_id,sale_date,quantity,revenue,for_pay,net_profit,commission,logistics_cost,sale_id)
+        VALUES ${ph.join(",")}
+        ON CONFLICT (sale_id, marketplace_id, sale_date)
+        DO UPDATE SET
+          revenue = EXCLUDED.revenue,
+          for_pay = EXCLUDED.for_pay,
+          commission = EXCLUDED.commission
+      `, values);
+
+    }
+
   }
 
+  console.log(`[WB] Sales synced: ${synced}`);
+
   return synced;
+
 }
 
-async function syncStocks(apiKey: string, marketplaceId: number): Promise<number> {
-  const url = `${WB_STATS_API}/api/v1/supplier/stocks?dateFrom=${dateNDaysAgo(1)}`;
-  const stocks = await wbFetch<WBStock[]>(url, apiKey);
-  if (!stocks || stocks.length === 0) return 0;
+async function syncStocks(apiKey: string, marketplaceId: number) {
 
-  await pool.query("DELETE FROM inventory WHERE marketplace_id = $1", [marketplaceId]);
+  const url =
+    `${WB_STATS_API}/api/v1/supplier/stocks?dateFrom=${dateNDaysAgo(1)}`;
+
+  const stocks = await wbRequest<any[]>(url, apiKey);
+
+  if (!stocks || !stocks.length) return 0;
+
+  await ensureCategoryBatch(stocks.map(s => s.subject || "Другое"));
+
+  await ensureProductBatch(
+    Array.from(new Map(stocks.map(s => [s.nmId, {
+      sku: s.supplierArticle || String(s.nmId),
+      name: s.subject || s.supplierArticle,
+      barcode: s.barcode,
+      subjectName: s.subject,
+      nmId: s.nmId,
+      brand: s.brand
+    }])).values())
+  );
+
+  await pool.query(
+    `DELETE FROM inventory WHERE marketplace_id=$1`,
+    [marketplaceId]
+  );
+
+  const BATCH = 2000;
 
   let synced = 0;
-  for (const stock of stocks) {
-    const sku = stock.supplierArticle || String(stock.nmId);
-    const categoryId = await ensureCategory(stock.subject);
-    const productId = await ensureProduct(sku, stock.subject || sku, stock.barcode, categoryId);
-    await pool.query(
-      `INSERT INTO inventory (product_id, marketplace_id, warehouse, quantity, recorded_at) VALUES ($1, $2, $3, $4, NOW())`,
-      [productId, marketplaceId, stock.warehouseName || "WB", stock.quantity]
-    );
-    synced++;
+
+  for (let i = 0; i < stocks.length; i += BATCH) {
+
+    const batch = stocks.slice(i, i + BATCH);
+
+    const values: any[] = [];
+    const ph: string[] = [];
+
+    let p = 1;
+
+    for (const s of batch) {
+
+      const pid = getProductId(s.nmId, s.supplierArticle);
+      if (!pid) continue;
+
+      ph.push(`($${p},$${p+1},$${p+2},$${p+3},NOW())`);
+
+      values.push(
+        pid,
+        marketplaceId,
+        s.warehouseName || "WB",
+        Math.round(s.quantity)
+      );
+
+      p += 4;
+      synced++;
+
+    }
+
+    if (ph.length) {
+
+      await pool.query(`
+        INSERT INTO inventory
+        (product_id,marketplace_id,warehouse,quantity,recorded_at)
+        VALUES ${ph.join(",")}
+      `, values);
+
+    }
+
   }
+
+  console.log(`[WB] Stocks synced: ${synced}`);
 
   return synced;
+
 }
 
-async function syncReturns(apiKey: string, marketplaceId: number, daysBack: number = 30): Promise<number> {
-  const dateFrom = dateNDaysAgo(daysBack);
-  const url = `${WB_STATS_API}/api/v1/supplier/orders?dateFrom=${dateFrom}`;
-  const orders = await wbFetch<WBOrder[]>(url, apiKey);
-  if (!orders || orders.length === 0) return 0;
+export async function runWBSync() {
 
-  let synced = 0;
-  for (const order of orders) {
-    if (!order.isCancel) continue;
-    const sku = order.supplierArticle || String(order.nmId);
-    const categoryId = await ensureCategory(order.subject);
-    const productId = await ensureProduct(sku, order.subject || sku, order.barcode, categoryId);
-    const returnDate = (order.cancelDate || order.date).split("T")[0];
-    await pool.query(
-      `INSERT INTO returns (product_id, marketplace_id, quantity, return_date) VALUES ($1, $2, 1, $3)`,
-      [productId, marketplaceId, returnDate]
-    );
-    synced++;
-  }
+  const { apiKey, marketplaceId } = await getWBCredentials();
 
-  return synced;
+  console.log("[WB] Sync started");
+
+  const sales = await syncSales(apiKey, marketplaceId);
+  const stocks = await syncStocks(apiKey, marketplaceId);
+
+  categoryCache.clear();
+  productCache.clear();
+
+  console.log("[WB] Sync complete", {
+    sales,
+    stocks
+  });
+
+  return {
+    sales,
+    stocks
+  };
+
 }
 
-async function updateJob(jobId: number, status: string, records: number, error?: string): Promise<void> {
-  if (status === "running") {
-    await pool.query("UPDATE sync_jobs SET status = $2, started_at = NOW() WHERE id = $1", [jobId, status]);
-  } else {
-    await pool.query(
-      `UPDATE sync_jobs SET status = $2, completed_at = NOW(), records_processed = $3, error_message = $4 WHERE id = $1`,
-      [jobId, status, records, error || null]
-    );
-  }
-}
-
-export async function runWBSync(jobId: number): Promise<void> {
-  let totalRecords = 0;
-  try {
-    await updateJob(jobId, "running", 0);
-    const { apiKey, marketplaceId } = await getWBCredentials();
-
-    console.log("[WB Sync] Cards...");
-    totalRecords += await syncCards(apiKey);
-
-    console.log("[WB Sync] Sales...");
-    totalRecords += await syncSales(apiKey, marketplaceId, 30);
-
-    console.log("[WB Sync] Report Detail (logistics, commissions)...");
-    totalRecords += await syncReportDetail(apiKey, marketplaceId, 30);
-
-    console.log("[WB Sync] Stocks...");
-    totalRecords += await syncStocks(apiKey, marketplaceId);
-
-    console.log("[WB Sync] Returns...");
-    totalRecords += await syncReturns(apiKey, marketplaceId, 30);
-
-    await updateJob(jobId, "completed", totalRecords);
-    console.log(`[WB Sync] Done! ${totalRecords} records`);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("[WB Sync] Error:", message);
-    await updateJob(jobId, "failed", totalRecords, message);
-  }
-}

@@ -78,13 +78,14 @@ export async function getKPI(
     WITH current_period AS (
       SELECT
         COALESCE(SUM(s.revenue), 0)::float                          AS total_revenue,
-        COALESCE(SUM(s.for_pay), 0)::float                          AS total_for_pay,
-        COALESCE(SUM(s.for_pay - COALESCE(p.cost_price, 0) * s.quantity), 0)::float AS total_profit,
+        COALESCE(SUM((s.revenue - s.commission - s.logistics_cost)), 0)::float                          AS total_for_pay,
+        COALESCE(SUM(s.net_profit), 0)::float AS total_profit,
         COALESCE(SUM(s.quantity), 0)::int                            AS total_quantity,
         COUNT(*)::int                                                AS total_orders,
         COUNT(DISTINCT s.product_id)::int                            AS total_sku,
-        COALESCE(SUM(s.revenue - s.for_pay), 0)::float               AS total_commission,
+        COALESCE(SUM(s.commission + s.logistics_cost), 0)::float               AS total_commission,
         COALESCE(SUM(s.logistics_cost), 0)::float                    AS total_logistics,
+        COALESCE(SUM(s.penalty), 0)::float                         AS total_penalty,
         COALESCE(SUM(COALESCE(p.cost_price, 0) * s.quantity), 0)::float AS total_cogs,
         MIN(s.sale_date)::text                                       AS date_from,
         MAX(s.sale_date)::text                                       AS date_to
@@ -96,13 +97,14 @@ export async function getKPI(
     previous_period AS (
       SELECT
         COALESCE(SUM(s.revenue), 0)::float                          AS total_revenue,
-        COALESCE(SUM(s.for_pay), 0)::float                          AS total_for_pay,
-        COALESCE(SUM(s.for_pay - COALESCE(p.cost_price, 0) * s.quantity), 0)::float AS total_profit,
+        COALESCE(SUM((s.revenue - s.commission - s.logistics_cost)), 0)::float                          AS total_for_pay,
+        COALESCE(SUM(s.net_profit), 0)::float AS total_profit,
         COALESCE(SUM(s.quantity), 0)::int                            AS total_quantity,
         COUNT(*)::int                                                AS total_orders,
         COUNT(DISTINCT s.product_id)::int                            AS total_sku,
-        COALESCE(SUM(s.revenue - s.for_pay), 0)::float               AS total_commission,
-        COALESCE(SUM(s.logistics_cost), 0)::float                    AS total_logistics
+        COALESCE(SUM(s.commission + s.logistics_cost), 0)::float               AS total_commission,
+        COALESCE(SUM(s.logistics_cost), 0)::float                    AS total_logistics,
+        COALESCE(SUM(s.penalty), 0)::float                         AS total_penalty
       FROM sales s
       ${catMpJoin}
       WHERE s.sale_date >= CURRENT_DATE - ($1::int * 2)
@@ -118,12 +120,25 @@ export async function getKPI(
       p.total_orders     AS prev_orders,
       p.total_sku        AS prev_sku,
       p.total_commission AS prev_commission,
-      p.total_logistics  AS prev_logistics
+      p.total_logistics  AS prev_logistics,
+      p.total_penalty    AS prev_penalty
     FROM current_period c, previous_period p
     `,
     f.params
   );
 
+  
+  // Get returns for current and previous period
+  const { rows: retRows } = await pool.query(`
+    SELECT
+      COALESCE(SUM(CASE WHEN r.return_date >= CURRENT_DATE - \$1::int THEN r.quantity ELSE 0 END), 0)::int AS cur_returns,
+      COALESCE(SUM(CASE WHEN r.return_date < CURRENT_DATE - \$1::int THEN r.quantity ELSE 0 END), 0)::int AS prev_returns,
+      COUNT(CASE WHEN r.return_date >= CURRENT_DATE - \$1::int THEN 1 END)::int AS cur_returns_count,
+      COUNT(CASE WHEN r.return_date < CURRENT_DATE - \$1::int THEN 1 END)::int AS prev_returns_count
+    FROM returns r
+    WHERE r.return_date >= CURRENT_DATE - (\$1::int * 2)
+  `, [days]);
+  const ret = retRows[0];
   const m = rows[0];
   const avgOrder = m.total_orders > 0 ? m.total_revenue / m.total_orders : 0;
   const prevAvgOrder = m.prev_orders > 0 ? m.prev_revenue / m.prev_orders : 0;
@@ -142,6 +157,9 @@ export async function getKPI(
     profit_margin_pct: parseFloat(marginPct.toFixed(1)),
     total_commission: m.total_commission,
     total_logistics: m.total_logistics,
+    total_penalty: m.total_penalty,
+    total_returns: ret.cur_returns_count,
+    total_returns_quantity: ret.cur_returns,
     date_from: m.date_from,
     date_to: m.date_to,
   };
@@ -155,6 +173,8 @@ export async function getKPI(
     margin: pctChange(marginPct, prevMarginPct),
     commission: pctChange(m.total_commission, m.prev_commission),
     logistics: pctChange(m.total_logistics, m.prev_logistics),
+    penalty: pctChange(m.total_penalty, m.prev_penalty),
+    returns: pctChange(ret.cur_returns_count, ret.prev_returns_count),
   };
 
   return { kpi, changes };
@@ -184,7 +204,7 @@ export async function getChart(
     SELECT
       s.sale_date::text                      AS date,
       COALESCE(SUM(s.revenue), 0)::float     AS revenue,
-      COALESCE(SUM(s.for_pay), 0)::float     AS profit,
+      COALESCE(SUM((s.revenue - s.commission - s.logistics_cost)), 0)::float     AS profit,
       COUNT(*)::int                          AS orders,
       COALESCE(SUM(s.quantity), 0)::int      AS quantity
     FROM sales s
@@ -227,7 +247,7 @@ export async function getByMarketplace(
       mp.slug                              AS marketplace,
       mp.name,
       COALESCE(SUM(s.revenue), 0)::float   AS revenue,
-      COALESCE(SUM(s.for_pay), 0)::float   AS profit,
+      COALESCE(SUM((s.revenue - s.commission - s.logistics_cost)), 0)::float   AS profit,
       COALESCE(SUM(s.quantity), 0)::int    AS quantity
     FROM sales s
     JOIN marketplaces mp ON mp.id = s.marketplace_id
@@ -286,7 +306,7 @@ export async function getTopProducts(
       p.sku,
       COALESCE(SUM(s.revenue), 0)::float     AS revenue,
       COALESCE(SUM(s.quantity), 0)::int      AS quantity,
-      COALESCE(SUM(s.for_pay), 0)::float     AS profit
+      COALESCE(SUM((s.revenue - s.commission - s.logistics_cost)), 0)::float     AS profit
     FROM sales s
     JOIN products p ON p.id = s.product_id
     JOIN categories c ON c.id = p.category_id

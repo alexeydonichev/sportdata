@@ -12,7 +12,7 @@ export interface PnLData {
     operating_expenses: number;
     operating_profit: number;
     advertising: number;
-    for_pay: number;
+    seller_income: number;
     net_profit: number;
   };
   margins: {
@@ -58,7 +58,7 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
   }
 
   // Main aggregation — use commission column directly (filled by Report Detail)
-  // Fallback: if commission column is 0, calculate from revenue - for_pay
+  // Fallback: if commission column is 0, calculate from commission + logistics_cost
   const pnlRes = await pool.query(`
     WITH filtered_sales AS (
       SELECT s.*, COALESCE(p.cost_price, 0) AS product_cost
@@ -74,15 +74,15 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
         COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END), 0)::float AS gross_revenue,
         COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(revenue) ELSE 0 END), 0)::float AS returns_amount,
         COALESCE(SUM(revenue), 0)::float AS net_revenue,
-        -- Use commission column; if all zeros, fallback to revenue - for_pay
+        -- Use commission column; if all zeros, fallback to commission + logistics_cost
         CASE 
           WHEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0) > 0 
           THEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0)::float
-          ELSE COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue - for_pay ELSE 0 END), 0)::float
+          ELSE COALESCE(SUM(CASE WHEN quantity > 0 THEN commission + logistics_cost ELSE 0 END), 0)::float
         END AS commission,
         COALESCE(SUM(logistics_cost), 0)::float AS logistics,
         COALESCE(SUM(CASE WHEN quantity > 0 THEN product_cost * quantity ELSE 0 END), 0)::float AS cogs,
-        COALESCE(SUM(for_pay), 0)::float AS total_for_pay,
+        COALESCE(SUM(revenue - commission - logistics_cost), 0)::float AS total_seller_income,
         COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0)::int AS units_sold,
         COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END), 0)::int AS units_returned,
         COUNT(DISTINCT CASE WHEN quantity > 0 THEN product_id END)::int AS active_skus
@@ -105,16 +105,16 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
         CASE 
           WHEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0) > 0 
           THEN COALESCE(SUM(CASE WHEN quantity > 0 THEN commission ELSE 0 END), 0)::float
-          ELSE COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue - for_pay ELSE 0 END), 0)::float
+          ELSE COALESCE(SUM(CASE WHEN quantity > 0 THEN commission + logistics_cost ELSE 0 END), 0)::float
         END AS commission,
         COALESCE(SUM(logistics_cost), 0)::float AS logistics,
         COALESCE(SUM(CASE WHEN quantity > 0 THEN product_cost * quantity ELSE 0 END), 0)::float AS cogs,
-        COALESCE(SUM(for_pay), 0)::float AS total_for_pay
+        COALESCE(SUM(revenue - commission - logistics_cost), 0)::float AS total_seller_income
       FROM prev_sales
     )
     SELECT c.*, p.gross_revenue AS prev_gross_revenue, p.net_revenue AS prev_net_revenue,
       p.commission AS prev_commission, p.logistics AS prev_logistics,
-      p.cogs AS prev_cogs, p.total_for_pay AS prev_for_pay
+      p.cogs AS prev_cogs, p.total_seller_income AS prev_seller_income
     FROM current_agg c, prev_agg p
   `, params);
 
@@ -128,10 +128,10 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
       CASE 
         WHEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0) > 0
         THEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0)::float
-        ELSE COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue - s.for_pay ELSE 0 END), 0)::float
+        ELSE COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue - (s.revenue - s.commission - s.logistics_cost) ELSE 0 END), 0)::float
       END AS commission,
       COALESCE(SUM(s.logistics_cost), 0)::float AS logistics,
-      COALESCE(SUM(s.for_pay), 0)::float AS profit
+      COALESCE(SUM((s.revenue - s.commission - s.logistics_cost)), 0)::float AS profit
     FROM sales s
     JOIN products p ON p.id = s.product_id
     LEFT JOIN categories c ON c.id = p.category_id
@@ -147,11 +147,11 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
       CASE 
         WHEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0) > 0
         THEN COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.commission ELSE 0 END), 0)::float
-        ELSE COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue - s.for_pay ELSE 0 END), 0)::float
+        ELSE COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue - (s.revenue - s.commission - s.logistics_cost) ELSE 0 END), 0)::float
       END AS commission,
       COALESCE(SUM(s.logistics_cost), 0)::float AS logistics,
       COALESCE(SUM(CASE WHEN s.quantity > 0 THEN COALESCE(p.cost_price, 0) * s.quantity ELSE 0 END), 0)::float AS cogs,
-      COALESCE(SUM(s.for_pay), 0)::float AS profit,
+      COALESCE(SUM((s.revenue - s.commission - s.logistics_cost)), 0)::float AS profit,
       COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END), 0)::int AS units
     FROM sales s
     JOIN products p ON p.id = s.product_id
@@ -166,7 +166,7 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
   const operatingExpenses = m.commission + m.logistics;
   const operatingProfit = grossProfit - operatingExpenses;
   // net_profit = for_pay - cogs - logistics (what seller really earns after all deductions)
-  const netProfit = m.total_for_pay - cogs - m.logistics;
+  const netProfit = m.total_seller_income - cogs - m.logistics;
 
   const grossMargin = m.gross_revenue > 0 ? (grossProfit / m.gross_revenue) * 100 : 0;
   const operatingMargin = m.gross_revenue > 0 ? (operatingProfit / m.gross_revenue) * 100 : 0;
@@ -177,7 +177,7 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
 
   const prevGrossProfit = m.prev_net_revenue - m.prev_cogs;
   const prevOperating = prevGrossProfit - m.prev_commission - m.prev_logistics;
-  const prevNetProfit = m.prev_for_pay - m.prev_cogs - m.prev_logistics;
+  const prevNetProfit = m.prev_seller_income - m.prev_cogs - m.prev_logistics;
 
   // Warnings
   const warnings: string[] = [];
@@ -209,7 +209,7 @@ export async function getPnL(days: number, categorySlug?: string, marketplace?: 
       operating_expenses: operatingExpenses,
       operating_profit: operatingProfit,
       advertising: 0,
-      for_pay: m.total_for_pay,
+      seller_income: m.total_seller_income,
       net_profit: netProfit,
     },
     margins: {

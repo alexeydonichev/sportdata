@@ -69,9 +69,11 @@ export default function DashboardPage() {
             <MetricCard label="Средний чек" value={formatMoney(data.avg_order_value)} change={c?.avg_order} />
           </div>
           {chartData && <RevenueChart data={chartData} />}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             <MetricCard label="Комиссии МП" value={formatMoney(data.total_commission)} change={c?.commission} invertColor />
             <MetricCard label="Логистика" value={formatMoney(data.total_logistics)} change={c?.logistics} invertColor />
+            <MetricCard label="Штрафы" value={formatMoney(data.total_penalty || 0)} change={c?.penalty} invertColor />
+            <MetricCard label="Возвраты" value={formatNumber(data.total_returns || 0)} change={c?.returns} invertColor subtitle={formatNumber(data.total_returns_quantity || 0) + " шт"} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <MarketplaceBreakdown data={data.by_marketplace} totalRevenue={data.total_revenue} />

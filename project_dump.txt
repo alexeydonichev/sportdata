@@ -1,0 +1,144 @@
+
+echo "======================================" >> "$OUTPUT"
+echo "  СТРУКТУРА ПРОЕКТА (дерево файлов)" >> "$OUTPUT"
+echo "======================================" >> "$OUTPUT"
+
+# Дерево файлов (без node_modules, .git и прочего мусора)
+find . \
+  -not -path '*/node_modules/*' \
+  -not -path '*/.git/*' \
+  -not -path '*/.next/*' \
+  -not -path '*/dist/*' \
+  -not -path '*/build/*' \
+  -not -path '*/__pycache__/*' \
+  -not -path '*/.venv/*' \
+  -not -path '*/venv/*' \
+  -not -path '*/.env' \
+  -not -name '*.lock' \
+  -not -name 'package-lock.json' \
+  -not -name '*.png' \
+  -not -name '*.jpg' \
+  -not -name '*.ico' \
+  -not -name '*.svg' \
+  | head -300 | sort >> "$OUTPUT"
+
+echo -e "\n\n" >> "$OUTPUT"
+
+# Собираем содержимое всех важных файлов
+for file in $(find . \
+  -not -path '*/node_modules/*' \
+  -not -path '*/.git/*' \
+  -not -path '*/.next/*' \
+  -not -path '*/dist/*' \
+  -not -path '*/build/*' \
+  -not -path '*/__pycache__/*' \
+  -not -path '*/.venv/*' \
+  -not -path '*/venv/*' \
+  -not -name '*.lock' \
+  -not -name 'package-lock.json' \
+  -not -name '*.png' \
+  -not -name '*.jpg' \
+  -not -name '*.ico' \
+  -not -name '*.svg' \
+  -not -name '*.woff*' \
+  -not -name '*.ttf' \
+  -not -name '*.map' \
+  -type f | sort); do
+  
+  # Только текстовые файлы до 500KB
+  if file "$file" | grep -qE 'text|JSON|javascript|TypeScript'; then
+    SIZE=$(wc -c < "$file")
+    if [ "$SIZE" -lt 500000 ]; then
+      echo "======================================" >> "$OUTPUT"
+      echo "FILE: $file" >> "$OUTPUT"
+      echo "======================================" >> "$OUTPUT"
+      cat "$file" >> "$OUTPUT"
+      echo -e "\n\n" >> "$OUTPUT"
+    fi
+  fi
+done
+
+# Итог
+LINES=$(wc -l < "$OUTPUT")
+SIZE=$(du -h "$OUTPUT" | cut -f1)
+echo ""
+echo "✅ Готово!"
+echo "📄 Файл: $OUTPUT"
+echo "📏 Строк: $LINES"
+echo "💾 Размер: $SIZE"
+echo ""
+echo "Скопируйте содержимое и отправьте в чат Claude"#!/bin/bash
+# Назовите файл: collect_project.sh
+# Запуск: bash collect_project.sh
+
+OUTPUT="project_dump.txt"
+> "$OUTPUT"
+
+echo "======================================" >> "$OUTPUT"
+echo "  СТРУКТУРА ПРОЕКТА (дерево файлов)" >> "$OUTPUT"
+echo "======================================" >> "$OUTPUT"
+
+# Дерево файлов (без node_modules, .git и прочего мусора)
+find . \
+  -not -path '*/node_modules/*' \
+  -not -path '*/.git/*' \
+  -not -path '*/.next/*' \
+  -not -path '*/dist/*' \
+  -not -path '*/build/*' \
+  -not -path '*/__pycache__/*' \
+  -not -path '*/.venv/*' \
+  -not -path '*/venv/*' \
+  -not -path '*/.env' \
+  -not -name '*.lock' \
+  -not -name 'package-lock.json' \
+  -not -name '*.png' \
+  -not -name '*.jpg' \
+  -not -name '*.ico' \
+  -not -name '*.svg' \
+  | head -300 | sort >> "$OUTPUT"
+
+echo -e "\n\n" >> "$OUTPUT"
+
+# Собираем содержимое всех важных файлов
+for file in $(find . \
+  -not -path '*/node_modules/*' \
+  -not -path '*/.git/*' \
+  -not -path '*/.next/*' \
+  -not -path '*/dist/*' \
+  -not -path '*/build/*' \
+  -not -path '*/__pycache__/*' \
+  -not -path '*/.venv/*' \
+  -not -path '*/venv/*' \
+  -not -name '*.lock' \
+  -not -name 'package-lock.json' \
+  -not -name '*.png' \
+  -not -name '*.jpg' \
+  -not -name '*.ico' \
+  -not -name '*.svg' \
+  -not -name '*.woff*' \
+  -not -name '*.ttf' \
+  -not -name '*.map' \
+  -type f | sort); do
+  
+  # Только текстовые файлы до 500KB
+  if file "$file" | grep -qE 'text|JSON|javascript|TypeScript'; then
+    SIZE=$(wc -c < "$file")
+    if [ "$SIZE" -lt 500000 ]; then
+      echo "======================================" >> "$OUTPUT"
+      echo "FILE: $file" >> "$OUTPUT"
+      echo "======================================" >> "$OUTPUT"
+      cat "$file" >> "$OUTPUT"
+      echo -e "\n\n" >> "$OUTPUT"
+    fi
+  fi
+done
+
+# Итог
+LINES=$(wc -l < "$OUTPUT")
+SIZE=$(du -h "$OUTPUT" | cut -f1)
+echo ""
+echo "✅ Готово!"
+echo "📄 Файл: $OUTPUT"
+echo "📏 Строк: $LINES"
+echo "💾 Размер: $SIZE"
+echo ""

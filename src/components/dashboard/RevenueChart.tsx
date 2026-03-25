@@ -13,8 +13,8 @@ interface Props {
 }
 
 function formatK(v: number) {
-  if (v >= 1000000) return (v / 1000000).toFixed(1) + "М";
-  if (v >= 1000) return (v / 1000).toFixed(0) + "К";
+  if (v >= 5000000) return (v / 5000000).toFixed(1) + "М";
+  if (v >= 5000) return (v / 5000).toFixed(0) + "К";
   return v.toString();
 }
 

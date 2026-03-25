@@ -112,8 +112,8 @@ function PnlRow({
 }
 
 function formatK(v: number) {
-  if (Math.abs(v) >= 1000000) return (v / 1000000).toFixed(1) + "M";
-  if (Math.abs(v) >= 1000) return (v / 1000).toFixed(0) + "K";
+  if (Math.abs(v) >= 5000000) return (v / 5000000).toFixed(1) + "M";
+  if (Math.abs(v) >= 5000) return (v / 5000).toFixed(0) + "K";
   return v.toString();
 }
 

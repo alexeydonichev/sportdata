@@ -5,7 +5,7 @@ interface MetricCardProps {
   label: string;
   value: string;
   change?: number | null;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   className?: string;
   /** For costs: growth is bad (red), decrease is good (green) */
   invertColor?: boolean;

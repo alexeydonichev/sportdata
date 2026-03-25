@@ -1,91 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
-
-// Simple in-memory rate limiter
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
-const MAX_ATTEMPTS = 5;
-const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const entry = loginAttempts.get(ip);
-
-  if (!entry || now > entry.resetAt) {
-    loginAttempts.set(ip, { count: 1, resetAt: now + WINDOW_MS });
-    return true;
-  }
-
-  if (entry.count >= MAX_ATTEMPTS) {
-    return false;
-  }
-
-  entry.count++;
-  return true;
-}
-
-function resetRateLimit(ip: string) {
-  loginAttempts.delete(ip);
-}
-
-// Cleanup old entries periodically
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of loginAttempts.entries()) {
-    if (now > entry.resetAt) loginAttempts.delete(ip);
-  }
-}, 60000);
+import bcrypt from "bcryptjs";
+import pool from "@/lib/db";
 
 export async function POST(req: NextRequest) {
-  const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
-
-  if (!checkRateLimit(ip)) {
-    return NextResponse.json(
-      { error: "Слишком много попыток. Повторите через 15 минут" },
-      { status: 429 }
-    );
-  }
-
   try {
-    const body = await req.json();
-    const email = String(body.email || "").trim().toLowerCase();
-    const password = String(body.password || "");
+    const { email, password } = await req.json();
+    if (!email || !password) return NextResponse.json({ error: "Email и пароль обязательны" }, { status: 400 });
 
-    if (!email || !password) {
-      return NextResponse.json({ error: "Email и пароль обязательны" }, { status: 400 });
-    }
+    const { rows } = await pool.query(
+      `SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, u.is_active,
+              r.slug as role, r.level as role_level
+       FROM users u JOIN roles r ON r.id = u.role_id
+       WHERE u.email = $1`, [email.toLowerCase()]
+    );
 
-    const adminEmail = process.env.ADMIN_EMAIL?.toLowerCase();
-    const adminPassword = process.env.ADMIN_PASSWORD;
-    const jwtSecret = process.env.JWT_SECRET;
+    if (!rows.length) return NextResponse.json({ error: "Неверный email или пароль" }, { status: 401 });
+    const user = rows[0];
+    if (!user.is_active) return NextResponse.json({ error: "Аккаунт деактивирован" }, { status: 403 });
 
-    if (!jwtSecret || jwtSecret.length < 32) {
-      console.error("JWT_SECRET is missing or too short");
-      return NextResponse.json({ error: "Server misconfigured" }, { status: 500 });
-    }
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return NextResponse.json({ error: "Неверный email или пароль" }, { status: 401 });
 
-    if (email === adminEmail && password === adminPassword) {
-      resetRateLimit(ip);
+    await pool.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
 
-      const user = {
-        id: "1",
-        email: adminEmail!,
-        first_name: "Алексей",
-        last_name: "Донич",
-        role: "admin",
-      };
+    const token = jwt.sign(
+      { sub: user.id, email: user.email, role: user.role, role_level: user.role_level },
+      process.env.JWT_SECRET!,
+      { expiresIn: "7d" }
+    );
 
-      const token = jwt.sign(
-        { sub: user.id, email: user.email, role: user.role },
-        jwtSecret,
-        { expiresIn: "7d" }
-      );
-
-      return NextResponse.json({ token, user });
-    }
-
-    // Generic error message — don't reveal whether email exists
-    return NextResponse.json({ error: "Неверный email или пароль" }, { status: 401 });
-  } catch (e: unknown) {
+    return NextResponse.json({
+      token,
+      user: { id: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name, role: user.role }
+    });
+  } catch (e) {
     console.error("Login error:", e);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

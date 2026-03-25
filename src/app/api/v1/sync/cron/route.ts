@@ -3,9 +3,12 @@ import pool from "@/lib/db";
 import { runWBSync } from "@/lib/wb-sync";
 
 export async function GET(req: NextRequest) {
-  // Protect with CRON_SECRET
-  const secret = req.nextUrl.searchParams.get("secret");
-  if (secret !== process.env.CRON_SECRET) {
+  // Protect with CRON_SECRET via header (not query string — avoids leaking in logs)
+  const secret =
+    req.headers.get("x-cron-secret") ||
+    req.nextUrl.searchParams.get("secret"); // backward compat, will deprecate
+
+  if (!secret || secret !== process.env.CRON_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

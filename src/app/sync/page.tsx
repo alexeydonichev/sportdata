@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import Spinner from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
@@ -45,6 +45,18 @@ export default function SyncPage() {
   const creds = credentials || [];
   const hist = history || [];
   const loading = loadingCreds || loadingHist;
+
+  // Auto-refresh while any job is running
+  const hasRunning = hist.some(j => j.status === "running" || j.status === "pending") || syncing !== null;
+
+  useEffect(() => {
+    if (!hasRunning) return;
+    const iv = setInterval(() => {
+      refreshCreds();
+      refreshHist();
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [hasRunning]);
 
   function reloadAll() { refreshCreds(); refreshHist(); }
 

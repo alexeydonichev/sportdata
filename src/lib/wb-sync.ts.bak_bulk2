@@ -1,0 +1,622 @@
+import pool from "@/lib/db";
+import { decrypt } from "@/lib/crypto";
+
+const WB_STATS_API = "https://statistics-api.wildberries.ru";
+const WB_CONTENT_API = "https://content-api.wildberries.ru";
+
+interface WBSale {
+  date: string;
+  supplierArticle: string;
+  barcode: string;
+  totalPrice: number;
+  discountPercent: number;
+  forPay: number;
+  finishedPrice: number;
+  priceWithDisc: number;
+  saleID: string;
+  spp: number;
+  nmId: number;
+  subject: string;
+  brand: string;
+  IsStorno: number;
+  warehouseName: string;
+}
+
+interface WBStock {
+  supplierArticle: string;
+  barcode: string;
+  quantity: number;
+  warehouseName: string;
+  nmId: number;
+  subject: string;
+  brand: string;
+  Price: number;
+  Discount: number;
+}
+
+interface WBCardListResponse {
+  cards: {
+    nmID: number;
+    vendorCode: string;
+    title: string;
+    subjectName: string;
+    brand: string;
+    barcodes: string[];
+    sizes: { price: number; discountedPrice: number; techSize?: string; wbSize?: string }[];
+    dimensions?: { width: number; height: number; length: number };
+    mediaFiles?: string[];
+  }[];
+  cursor: { total: number; updatedAt: string; nmID: number };
+}
+
+interface WBReportDetail {
+  realizationreport_id: number;
+  rrd_id: number;
+  nm_id: number;
+  sa_name: string;
+  barcode: string;
+  subject_name: string;
+  brand_name: string;
+  doc_type_name: string;
+  quantity: number;
+  retail_price: number;
+  retail_amount: number;
+  retail_price_withdisc_rub: number;
+  delivery_rub: number;
+  ppvz_sales_commission: number;
+  ppvz_for_pay: number;
+  penalty: number;
+  additional_payment: number;
+  acquiring_fee: number;
+  supplier_oper_name: string;
+  order_dt: string;
+  sale_dt: string;
+  office_name: string;
+  date_from: string;
+  date_to: string;
+  ppvz_spp_prc: number;
+  ppvz_kvw_prc: number;
+  ppvz_kvw_prc_base: number;
+  ppvz_office_name: string;
+  site_country: string;
+  srid: string;
+  rid: number;
+  sticker_id: number;
+  kiz: string;
+  storage_fee: number;
+  deduction: number;
+  acceptance: number;
+  rebill_logistic_cost: number;
+  return_amount: number;
+  gi_id: number;
+  shk_id: number;
+  bonus_type_name: string;
+  suppliercontract_code: string;
+  product_discount_for_report: number;
+}
+
+// --- Retry with backoff ---
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function wbFetch<T>(url: string, apiKey: string, maxRetries = 5): Promise<T> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, { headers: { Authorization: apiKey } });
+    if (res.status === 429) {
+      const wait = Math.min(60 * attempt, 300);
+      console.warn(`[WB] 429 on GET. Retry ${attempt}/${maxRetries} in ${wait}s`);
+      await sleep(wait * 5000);
+      continue;
+    }
+    if (res.status >= 500 && attempt < maxRetries) {
+      console.warn(`[WB] ${res.status} server error. Retry ${attempt}/${maxRetries} in ${10 * attempt}s`);
+      await sleep(10 * attempt * 5000);
+      continue;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`WB API ${res.status}: ${text.slice(0, 500)}`);
+    }
+    return res.json() as Promise<T>;
+  }
+  throw new Error(`WB API: max retries exceeded for ${url}`);
+}
+
+async function wbPost<T>(url: string, apiKey: string, body: unknown, maxRetries = 5): Promise<T> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 429) {
+      const wait = Math.min(60 * attempt, 300);
+      console.warn(`[WB] 429 on POST. Retry ${attempt}/${maxRetries} in ${wait}s`);
+      await sleep(wait * 5000);
+      continue;
+    }
+    if (res.status >= 500 && attempt < maxRetries) {
+      await sleep(10 * attempt * 5000);
+      continue;
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`WB API POST ${res.status}: ${text.slice(0, 500)}`);
+    }
+    return res.json() as Promise<T>;
+  }
+  throw new Error(`WB API POST: max retries exceeded for ${url}`);
+}
+
+function dateNDaysAgo(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split("T")[0];
+}
+
+function toSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-zа-яё0-9]+/gi, "_").replace(/^_|_$/g, "").slice(0, 50);
+}
+
+async function getWBCredentials(): Promise<{ apiKey: string; marketplaceId: number }> {
+  const { rows } = await pool.query(
+    `SELECT mc.api_key_encrypted, mc.marketplace_id
+     FROM marketplace_credentials mc JOIN marketplaces m ON m.id = mc.marketplace_id
+     WHERE m.slug = 'wildberries' AND mc.is_active = true LIMIT 1`
+  );
+  if (rows.length === 0) throw new Error("WB credentials not found");
+  return { apiKey: decrypt(rows[0].api_key_encrypted), marketplaceId: rows[0].marketplace_id };
+}
+
+// --- Batch caches to avoid N+1 ---
+
+const categoryCache = new Map<string, number>();
+const productCache = new Map<string, number>();
+
+async function ensureCategoryBatch(names: string[]): Promise<void> {
+  const unique = [...new Set(names.map((n) => n || "Другое"))];
+  const uncached = unique.filter((n) => !categoryCache.has(toSlug(n)));
+  if (uncached.length === 0) return;
+  const slugs = uncached.map(toSlug);
+  const { rows } = await pool.query(`SELECT id, slug FROM categories WHERE slug = ANY($1)`, [slugs]);
+  for (const r of rows) categoryCache.set(r.slug, r.id);
+  for (const name of uncached) {
+    const slug = toSlug(name);
+    if (categoryCache.has(slug)) continue;
+    const { rows: ins } = await pool.query(
+      `INSERT INTO categories (slug, name) VALUES ($1, $2) ON CONFLICT (slug) DO UPDATE SET name = $2 RETURNING id`,
+      [slug, name]
+    );
+    categoryCache.set(slug, ins[0].id);
+  }
+}
+
+async function ensureProductBatch(
+  items: { sku: string; name: string; barcode: string | null; subjectName: string; nmId: number; brand?: string }[]
+): Promise<void> {
+  const uniqueNmIds = [...new Set(items.map((i) => i.nmId).filter(Boolean))];
+  const uncached = uniqueNmIds.filter((id) => !productCache.has(`nm_${id}`));
+  if (uncached.length === 0) return;
+  const { rows } = await pool.query(`SELECT id, nm_id, sku FROM products WHERE nm_id = ANY($1)`, [uncached]);
+  for (const r of rows) {
+    productCache.set(`nm_${r.nm_id}`, r.id);
+    productCache.set(`sku_${r.sku}`, r.id);
+  }
+  const seen = new Set<number>();
+  for (const item of items) {
+    if (!item.nmId || productCache.has(`nm_${item.nmId}`) || seen.has(item.nmId)) continue;
+    seen.add(item.nmId);
+    const catId = categoryCache.get(toSlug(item.subjectName || "Другое"));
+    if (!catId) continue;
+    const { rows: ins } = await pool.query(
+      `INSERT INTO products (name, sku, barcode, cost_price, category_id, nm_id, brand)
+       VALUES ($1,$2,$3,0,$4,$5,$6)
+       ON CONFLICT (nm_id) DO UPDATE SET name=EXCLUDED.name, sku=EXCLUDED.sku,
+       barcode=COALESCE(EXCLUDED.barcode,products.barcode), category_id=EXCLUDED.category_id,
+       brand=COALESCE(EXCLUDED.brand,products.brand), updated_at=NOW()
+       RETURNING id`,
+      [item.name, item.sku, item.barcode, catId, item.nmId, item.brand || null]
+    );
+    productCache.set(`nm_${item.nmId}`, ins[0].id);
+    productCache.set(`sku_${item.sku}`, ins[0].id);
+  }
+}
+
+function getProductId(nmId: number, sku?: string): number | null {
+  if (nmId && productCache.has(`nm_${nmId}`)) return productCache.get(`nm_${nmId}`)!;
+  if (sku && productCache.has(`sku_${sku}`)) return productCache.get(`sku_${sku}`)!;
+  return null;
+}
+
+// --- Sync Cards (with extended product info) ---
+
+async function syncCards(apiKey: string): Promise<number> {
+  let synced = 0;
+  let cursor = { updatedAt: "", nmID: 0 };
+  const limit = 100;
+  while (true) {
+    const body: Record<string, unknown> = {
+      settings: { cursor: { limit }, filter: { withPhoto: -1 } },
+    };
+    if (cursor.updatedAt) {
+      (body.settings as Record<string, unknown>).cursor = { limit, updatedAt: cursor.updatedAt, nmID: cursor.nmID };
+    }
+    const data = await wbPost<WBCardListResponse>(`${WB_CONTENT_API}/content/v2/get/cards/list`, apiKey, body);
+    if (!data.cards || data.cards.length === 0) break;
+    await ensureCategoryBatch(data.cards.map((c) => c.subjectName || "Другое"));
+    await ensureProductBatch(data.cards.map((c) => ({
+      sku: c.vendorCode || String(c.nmID),
+      name: c.title || c.vendorCode || String(c.nmID),
+      barcode: c.barcodes?.[0] || null,
+      subjectName: c.subjectName || "Другое",
+      nmId: c.nmID,
+      brand: c.brand || undefined,
+    })));
+
+    // Update extended product info (dimensions, image, prices)
+    for (const c of data.cards) {
+      const pid = getProductId(c.nmID, c.vendorCode);
+      if (!pid) continue;
+      const img = c.mediaFiles?.[0] || null;
+      const w = c.dimensions?.width || 0;
+      const h = c.dimensions?.height || 0;
+      const l = c.dimensions?.length || 0;
+      const rp = c.sizes?.[0]?.price || 0;
+      const dp = c.sizes?.[0]?.discountedPrice || 0;
+      await pool.query(
+        `UPDATE products SET
+          image_url = COALESCE($1, image_url),
+          width = CASE WHEN $2 > 0 THEN $2 ELSE width END,
+          height = CASE WHEN $3 > 0 THEN $3 ELSE height END,
+          length = CASE WHEN $4 > 0 THEN $4 ELSE length END,
+          retail_price = CASE WHEN $5 > 0 THEN $5 ELSE retail_price END,
+          discount_price = CASE WHEN $6 > 0 THEN $6 ELSE discount_price END,
+          updated_at = NOW()
+        WHERE id = $7`,
+        [img, w, h, l, rp, dp, pid]
+      );
+    }
+
+    synced += data.cards.length;
+    if (data.cards.length < limit) break;
+    cursor = { updatedAt: data.cursor.updatedAt, nmID: data.cursor.nmID };
+  }
+  console.log(`[WB] Cards: ${synced}`);
+  return synced;
+}
+
+// --- Sync Sales (batch insert) ---
+
+async function syncSales(apiKey: string, marketplaceId: number, daysBack: number = 90): Promise<number> {
+  const url = `${WB_STATS_API}/api/v1/supplier/sales?dateFrom=${dateNDaysAgo(daysBack)}`;
+  const sales = await wbFetch<WBSale[]>(url, apiKey);
+  if (!sales || sales.length === 0) return 0;
+  await ensureCategoryBatch(sales.map((s) => s.subject || "Другое"));
+  await ensureProductBatch(sales.map((s) => ({
+    sku: s.supplierArticle || String(s.nmId),
+    name: s.subject || s.supplierArticle || String(s.nmId),
+    barcode: s.barcode,
+    subjectName: s.subject || "Другое",
+    nmId: s.nmId,
+    brand: s.brand || undefined,
+  })));
+  let synced = 0;
+  const BATCH = 500;
+  for (let i = 0; i < sales.length; i += BATCH) {
+    const batch = sales.slice(i, i + BATCH);
+    const values: unknown[] = [];
+    const ph: string[] = [];
+    let p = 1;
+    for (const s of batch) {
+      if (s.IsStorno === 1) continue;
+      const pid = getProductId(s.nmId, s.supplierArticle);
+      if (!pid) continue;
+      const rev = s.priceWithDisc || s.finishedPrice || 0;
+      const fp = s.forPay || 0;
+      ph.push(`($${p},$${p+1},$${p+2},1,$${p+3},$${p+4},$${p+5},$${p+6},0,$${p+7})`);
+      values.push(pid, marketplaceId, s.date.split("T")[0], rev, fp, fp, Math.max(rev - fp, 0), s.saleID || null);
+      p += 8;
+      synced++;
+    }
+    if (ph.length > 0) {
+      await pool.query(
+        `INSERT INTO sales (product_id,marketplace_id,sale_date,quantity,revenue,for_pay,net_profit,commission,logistics_cost,sale_id)
+         VALUES ${ph.join(",")}
+         ON CONFLICT (sale_id) WHERE sale_id IS NOT NULL
+         DO UPDATE SET revenue=EXCLUDED.revenue, for_pay=EXCLUDED.for_pay, commission=EXCLUDED.commission`,
+        values
+      );
+    }
+  }
+  console.log(`[WB] Sales: ${synced}`);
+  return synced;
+}
+
+// --- Sync Stocks (batch insert) ---
+
+async function syncStocks(apiKey: string, marketplaceId: number): Promise<number> {
+  const url = `${WB_STATS_API}/api/v1/supplier/stocks?dateFrom=${dateNDaysAgo(1)}`;
+  const stocks = await wbFetch<WBStock[]>(url, apiKey);
+  if (!stocks || stocks.length === 0) return 0;
+  await ensureCategoryBatch(stocks.map((s) => s.subject || "Другое"));
+  await ensureProductBatch(stocks.map((s) => ({
+    sku: s.supplierArticle || String(s.nmId),
+    name: s.subject || s.supplierArticle || String(s.nmId),
+    barcode: s.barcode,
+    subjectName: s.subject || "Другое",
+    nmId: s.nmId,
+    brand: s.brand || undefined,
+  })));
+  await pool.query("DELETE FROM inventory WHERE marketplace_id = $1", [marketplaceId]);
+  let synced = 0;
+  const BATCH = 500;
+  for (let i = 0; i < stocks.length; i += BATCH) {
+    const batch = stocks.slice(i, i + BATCH);
+    const values: unknown[] = [];
+    const ph: string[] = [];
+    let p = 1;
+    for (const s of batch) {
+      const pid = getProductId(s.nmId, s.supplierArticle);
+      if (!pid) continue;
+      ph.push(`($${p},$${p+1},$${p+2},$${p+3},NOW())`);
+      values.push(pid, marketplaceId, s.warehouseName || "WB", Math.round(s.quantity));
+      p += 4;
+      synced++;
+    }
+    if (ph.length > 0) {
+      await pool.query(
+        `INSERT INTO inventory (product_id,marketplace_id,warehouse,quantity,recorded_at) VALUES ${ph.join(",")}`,
+        values
+      );
+    }
+  }
+  console.log(`[WB] Stocks: ${synced}`);
+  return synced;
+}
+
+// --- Sync Report Detail: full financial data + returns ---
+
+async function syncReportDetail(apiKey: string, marketplaceId: number, daysBack: number = 90): Promise<{ rows: number; returns: number }> {
+  const dateFrom = dateNDaysAgo(daysBack);
+  const dateTo = new Date().toISOString().split("T")[0];
+  let rrdid = 0;
+  let total = 0;
+
+  // Accumulators per nm_id|date
+  const logMap = new Map<string, number>();
+  const comMap = new Map<string, number>();
+  const penMap = new Map<string, number>();
+  const acqMap = new Map<string, number>();
+  const storMap = new Map<string, number>();
+  const dedMap = new Map<string, number>();
+  const accMap = new Map<string, number>();
+  const retLogMap = new Map<string, number>();
+  const addPayMap = new Map<string, number>();
+  const sppMap = new Map<string, number>();
+  const comPctMap = new Map<string, number>();
+  const retailMap = new Map<string, number>();
+  const discPriceMap = new Map<string, number>();
+  const countryMap = new Map<string, string>();
+  const officeMap = new Map<string, string>();
+  const pvzMap = new Map<string, string>();
+  const reportIdMap = new Map<string, number>();
+
+  interface RealReturn {
+    nmId: number; saName: string; barcode: string; subjectName: string;
+    qty: number; date: string; rrdId: number; returnAmount: number;
+    returnLogCost: number; country: string; office: string; srid: string;
+    operName: string;
+  }
+  const realReturns: RealReturn[] = [];
+
+  console.log(`[WB Report] ${dateFrom} → ${dateTo}`);
+  while (true) {
+    const url = `${WB_STATS_API}/api/v5/supplier/reportDetailByPeriod?dateFrom=${dateFrom}&dateTo=${dateTo}&rrdid=${rrdid}&limit=500000`;
+    const rows = await wbFetch<WBReportDetail[]>(url, apiKey);
+    if (!rows || rows.length === 0) break;
+    for (const r of rows) {
+      if (!r.nm_id) { rrdid = r.rrd_id; continue; }
+      const dt = (r.sale_dt || r.order_dt || "").split("T")[0];
+      if (!dt) { rrdid = r.rrd_id; continue; }
+      const key = `${r.nm_id}|${dt}`;
+      const doc = (r.doc_type_name || "").toLowerCase();
+
+      // Accumulate all financial data
+      if (r.delivery_rub > 0) logMap.set(key, (logMap.get(key) || 0) + r.delivery_rub);
+      if (r.ppvz_sales_commission > 0 && doc.includes("продажа")) {
+        comMap.set(key, (comMap.get(key) || 0) + r.ppvz_sales_commission);
+      }
+      if (r.penalty > 0) penMap.set(key, (penMap.get(key) || 0) + r.penalty);
+      if (r.acquiring_fee > 0) acqMap.set(key, (acqMap.get(key) || 0) + r.acquiring_fee);
+      if (r.storage_fee > 0) storMap.set(key, (storMap.get(key) || 0) + r.storage_fee);
+      if (r.deduction > 0) dedMap.set(key, (dedMap.get(key) || 0) + r.deduction);
+      if (r.acceptance > 0) accMap.set(key, (accMap.get(key) || 0) + r.acceptance);
+      if (r.rebill_logistic_cost > 0) retLogMap.set(key, (retLogMap.get(key) || 0) + r.rebill_logistic_cost);
+      if (r.additional_payment) addPayMap.set(key, (addPayMap.get(key) || 0) + r.additional_payment);
+
+      // Latest values per key
+      if (r.ppvz_spp_prc) sppMap.set(key, r.ppvz_spp_prc);
+      if (r.ppvz_kvw_prc) comPctMap.set(key, r.ppvz_kvw_prc);
+      if (r.retail_price > 0) retailMap.set(key, r.retail_price);
+      if (r.retail_price_withdisc_rub > 0) discPriceMap.set(key, r.retail_price_withdisc_rub);
+      if (r.site_country) countryMap.set(key, r.site_country);
+      if (r.office_name) officeMap.set(key, r.office_name);
+      if (r.ppvz_office_name) pvzMap.set(key, r.ppvz_office_name);
+      if (r.realizationreport_id) reportIdMap.set(key, r.realizationreport_id);
+
+      // Real returns
+      if (doc.includes("возврат") && r.quantity !== 0) {
+        realReturns.push({
+          nmId: r.nm_id, saName: r.sa_name, barcode: r.barcode,
+          subjectName: r.subject_name,
+          qty: Math.round(Math.abs(r.quantity)),
+          date: dt, rrdId: Math.round(r.rrd_id),
+          returnAmount: r.return_amount || 0,
+          returnLogCost: r.rebill_logistic_cost || 0,
+          country: r.site_country || "",
+          office: r.office_name || "",
+          srid: r.srid || "",
+          operName: r.supplier_oper_name || "",
+        });
+      }
+      rrdid = r.rrd_id;
+    }
+    total += rows.length;
+    console.log(`[WB Report] ${total} rows (rrdid=${rrdid})`);
+    if (rows.length < 500000) break;
+  }
+
+  // Update sales with ALL financial details
+  let updated = 0;
+  for (const [key, log] of logMap) {
+    const [nmStr, dt] = key.split("|");
+    const pid = getProductId(parseInt(nmStr));
+    if (!pid) continue;
+    const { rows: sr } = await pool.query(
+      `SELECT id FROM sales WHERE product_id=$1 AND sale_date=$2 AND marketplace_id=$3 LIMIT 50`, [pid, dt, marketplaceId]
+    );
+    if (sr.length === 0) continue;
+    const ids = sr.map((r) => r.id);
+    const n = ids.length;
+    const com = comMap.get(key) || 0;
+    const pen = penMap.get(key) || 0;
+    const acq = acqMap.get(key) || 0;
+    const stor = storMap.get(key) || 0;
+    const ded = dedMap.get(key) || 0;
+    const acc = accMap.get(key) || 0;
+    const retLog = retLogMap.get(key) || 0;
+    const addPay = addPayMap.get(key) || 0;
+    const spp = sppMap.get(key) || 0;
+    const comPct = comPctMap.get(key) || 0;
+    const rp = retailMap.get(key) || 0;
+    const dp = discPriceMap.get(key) || 0;
+    const country = countryMap.get(key) || null;
+    const office = officeMap.get(key) || null;
+    const pvz = pvzMap.get(key) || null;
+    const repIdRaw = reportIdMap.get(key); const repId = repIdRaw !== undefined && repIdRaw !== null ? Math.floor(Number(repIdRaw)) : null;
+
+    tempRows.push({
+        logistics_cost = $1,
+        commission = CASE WHEN $2 > 0 THEN $2 ELSE commission END,
+        penalty = $3,
+        acquiring_fee = $4,
+        storage_fee = $5,
+        deduction = $6,
+        acceptance_cost = $7,
+        return_logistic_cost = $8,
+        additional_payment = $9,
+        spp_percent = $10,
+        commission_percent = $11,
+        retail_price = CASE WHEN $12 > 0 THEN $12 ELSE retail_price END,
+        discount_price = CASE WHEN $13 > 0 THEN $13 ELSE discount_price END,
+        site_country = COALESCE($14, site_country),
+        office_name = COALESCE($15, office_name),
+        ppvz_office_name = COALESCE($16, ppvz_office_name),
+        report_id = COALESCE($17, report_id),
+        net_profit = for_pay - $1 - $3 - $4 - $5 - $6 - $7
+      WHERE id = ANY($18)`,
+      [
+        +(log / n).toFixed(2), +(com / n).toFixed(2), +(pen / n).toFixed(2),
+        +(acq / n).toFixed(2), +(stor / n).toFixed(2), +(ded / n).toFixed(2),
+        +(acc / n).toFixed(2), +(retLog / n).toFixed(2), +(addPay / n).toFixed(2),
+        spp, comPct, rp, dp, country, office, pvz, repId, ids
+      ]
+    );
+    updated += ids.length;
+  }
+  console.log(`[WB Report] Updated ${updated} sales with full financial data`);
+
+  // Insert REAL returns with extended data
+  let retIns = 0;
+  if (realReturns.length > 0) {
+    await ensureCategoryBatch(realReturns.map((r) => r.subjectName || "Другое"));
+    await ensureProductBatch(realReturns.map((r) => ({
+      sku: r.saName || String(r.nmId), name: r.subjectName || String(r.nmId),
+      barcode: r.barcode || null, subjectName: r.subjectName || "Другое", nmId: r.nmId,
+    })));
+    const BATCH = 500;
+    for (let i = 0; i < realReturns.length; i += BATCH) {
+      const batch = realReturns.slice(i, i + BATCH);
+      const values: unknown[] = [];
+      const ph: string[] = [];
+      let p = 1;
+      for (const ret of batch) {
+        const pid = getProductId(ret.nmId, ret.saName);
+        if (!pid) continue;
+        ph.push(`($${p},$${p+1},$${p+2},$${p+3},$${p+4},$${p+5},$${p+6},$${p+7},$${p+8},$${p+9})`);
+        values.push(
+          pid, marketplaceId, Math.round(Number(Math.round(Number(ret.qty) || 0)) || 0), ret.date, ret.rrdId,
+          ret.returnAmount, ret.returnLogCost, ret.country || null,
+          ret.office || null, ret.srid || null
+        );
+        p += 10;
+        retIns++;
+      }
+      if (ph.length > 0) {
+        await pool.query(
+          `INSERT INTO returns (product_id, marketplace_id, quantity, return_date, rrd_id,
+            return_amount, return_logistic_cost, site_country, office_name, srid)
+           VALUES ${ph.join(",")}
+           ON CONFLICT (rrd_id) WHERE rrd_id IS NOT NULL DO NOTHING`,
+          values
+        );
+      }
+    }
+  }
+  console.log(`[WB Report] Returns: ${retIns} (with extended data)`);
+  return { rows: total, returns: retIns };
+}
+
+// --- Job helpers ---
+
+async function updateJob(jobId: number, status: string, records: number, error?: string): Promise<void> {
+  if (status === "running") {
+    await pool.query("UPDATE sync_jobs SET status=$2, started_at=NOW() WHERE id=$1", [jobId, status]);
+  } else {
+    await pool.query(
+      `UPDATE sync_jobs SET status=$2, completed_at=NOW(), records_processed=$3, error_message=$4 WHERE id=$1`,
+      [jobId, status, records, error || null]
+    );
+  }
+}
+
+// --- Main ---
+
+async function runPhase<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  console.log(`[sync] phase=${name} start`);
+  try {
+    const result = await fn();
+    console.log(`[sync] phase=${name} done`);
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`phase=${name}: ${message}`);
+  }
+}
+
+export async function runWBSync(jobId: number): Promise<void> {
+  let total = 0;
+  categoryCache.clear();
+  productCache.clear();
+
+  try {
+    await updateJob(jobId, "running", 0);
+    const { apiKey, marketplaceId } = await getWBCredentials();
+
+    total += await runPhase("cards", () => syncCards(apiKey));
+    total += await runPhase("sales", () => syncSales(apiKey, marketplaceId, 90));
+    const rpt = await runPhase("report", () => syncReportDetail(apiKey, marketplaceId, 90));
+    total += rpt.rows + rpt.returns;
+    total += await runPhase("stocks", () => syncStocks(apiKey, marketplaceId));
+
+    await updateJob(jobId, "completed", total);
+    console.log(`[WB] Done: ${total} records`);
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[WB] Error:", msg);
+    await updateJob(jobId, "failed", total, msg);
+  }
+}

@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>⚔️ Demon Slayer Hub</title>
+
+<style>
+
+body{
+margin:0;
+font-family:Arial;
+background:linear-gradient(135deg,#0f0f0f,#1b1b1b);
+color:white;
+}
+
+header{
+background:#111;
+padding:20px;
+display:flex;
+justify-content:space-between;
+align-items:center;
+box-shadow:0 4px 20px rgba(0,0,0,0.5);
+}
+
+.logo{
+font-size:24px;
+color:#ff4d4d;
+font-weight:bold;
+}
+
+button{
+background:#ff4d4d;
+border:none;
+padding:10px 16px;
+border-radius:8px;
+color:white;
+cursor:pointer;
+font-size:14px;
+}
+
+button:hover{
+background:#ff2a2a;
+}
+
+.container{
+max-width:900px;
+margin:auto;
+padding:30px;
+}
+
+.article{
+background:#1e1e1e;
+border-radius:12px;
+padding:20px;
+margin-bottom:20px;
+box-shadow:0 10px 25px rgba(0,0,0,0.4);
+transition:transform 0.2s;
+}
+
+.article:hover{
+transform:scale(1.02);
+}
+
+.article h2{
+margin-top:0;
+color:#ff6b6b;
+}
+
+.reactions{
+margin-top:10px;
+}
+
+.reactions span{
+margin-right:15px;
+cursor:pointer;
+}
+
+.comment{
+background:#2a2a2a;
+padding:8px;
+margin-top:8px;
+border-radius:6px;
+}
+
+input{
+margin-top:10px;
+padding:8px;
+border-radius:6px;
+border:none;
+width:70%;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+<div class="logo">⚔️ Demon Slayer Hub</div>
+<button onclick="createArticle()">➕ Новая статья</button>
+</header>
+
+<div class="container" id="articles"></div>
+
+<script>
+
+function createArticle(){
+
+let title = prompt("Название статьи");
+let text = prompt("Текст статьи");
+
+if(!title || !text) return;
+
+let article = document.createElement("div");
+article.className="article";
+
+article.innerHTML = `
+<h2>${title}</h2>
+<p>${text}</p>
+
+<div class="reactions">
+<span onclick="react(this)">❤️ 0</span>
+<span onclick="react(this)">🔥 0</span>
+<span onclick="react(this)">⚔️ 0</span>
+</div>
+
+<div class="comments"></div>
+
+<input placeholder="Написать комментарий">
+<button onclick="addComment(this)">Отправить</button>
+`;
+
+document.getElementById("articles").prepend(article);
+
+}
+
+function react(el){
+
+let parts = el.innerText.split(" ");
+let count = parseInt(parts[1]) + 1;
+el.innerText = parts[0] + " " + count;
+
+}
+
+function addComment(btn){
+
+let input = btn.previousElementSibling;
+let text = input.value;
+
+if(text==="") return;
+
+let div = document.creat html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Штаб охотников на демонов</title>
+<style>
+body{
+font-family:Arial;
+background:#111;
+color:white;
+margin:40px;
+}
+h1{color:#ff4d4d;}
+.article{
+background:#222;
+padding:15px;
+border-radius:10px;
+margin-top:20px;
+}
+button{
+margin-top:10px;
+padding:6px 10px;
+cursor:pointer;
+}
+.comment{
+background:#333;
+margin-top:8px;
+padding:6px;
+border-radius:6px;
+}
+</style>
+</head>
+<body>
+
+<h1>⚔️ Штаб охотников на демонов</h1>
+
+<div class="article">
+<h2>Тандзиро Камадо</h2>
+
+<p>
+Тандзиро стал охотником на демонов чтобы спасти свою сестру Нэдзуко.
+</p>
+
+<button onclick="like()">❤️ Реакция <span id="likes">0</span></button>
+
+<h3>Комментарии</h3>
+
+<div id="comments"></div>
+
+<input id="commentInput" placeholder="Напиши комментарий">
+<button onclick="addComment()">Отправить</button>
+
+</div>
+
+<script>
+let likes=0;
+
+function like(){
+likes++;
+document.getElementById("likes").innerText=likes;
+}
+
+function addComment(){
+let text=document.getElementById("commentInput").value;
+if(text==="") return;
+
+let div=document.createElement("div");
+div.className="comment";
+div.innerText=text;
+
+document.getElementById("comments").appendChild(div);
+document.getElementById("commentInput").value="";
+}
+</script>
+
+</body>
+</html>

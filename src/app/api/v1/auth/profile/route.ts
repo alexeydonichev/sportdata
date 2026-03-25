@@ -1,61 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getUserFromRequest } from "@/lib/auth";
-import { readFile, writeFile, mkdir } from "fs/promises";
-import path from "path";
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const PROFILE_FILE = path.join(DATA_DIR, "profile.json");
-
-async function readProfile(): Promise<Record<string, unknown>> {
-  try {
-    const raw = await readFile(PROFILE_FILE, "utf-8");
-    return JSON.parse(raw);
-  } catch { return {}; }
-}
-
-async function saveProfile(data: Record<string, unknown>) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(PROFILE_FILE, JSON.stringify(data, null, 2));
-}
+import pool from "@/lib/db";
 
 export async function GET(req: NextRequest) {
-  const user = getUserFromRequest(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const profile = await readProfile();
-  return NextResponse.json({
-    email: user.email,
-    first_name: profile.first_name || "",
-    last_name: profile.last_name || "",
-    company: profile.company || "",
-    phone: profile.phone || "",
-    avatar_url: profile.avatar_url || null,
-  });
-}
-
-export async function PUT(req: NextRequest) {
-  const user = getUserFromRequest(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  try {
-    const body = await req.json();
-
-    // Sanitize — only allow specific fields, max lengths
-    const ALLOWED_FIELDS = ["first_name", "last_name", "company", "phone"];
-    const MAX_LEN = 100;
-
-    const profile = await readProfile();
-    for (const field of ALLOWED_FIELDS) {
-      if (body[field] !== undefined) {
-        const val = String(body[field]).trim().slice(0, MAX_LEN);
-        profile[field] = val;
-      }
-    }
-
-    await saveProfile(profile);
-    return NextResponse.json({ success: true });
-  } catch (e) {
-    console.error("Profile update error:", e);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
+  const actor = getUserFromRequest(req);
+  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { rows } = await pool.query(
+    `SELECT u.id, u.email, u.first_name, u.last_name, r.slug as role, r.name as role_name, r.level as role_level, u.is_active, u.last_login_at::text, u.created_at::text
+     FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, [actor.id]);
+  if (!rows.length) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  return NextResponse.json({ user: rows[0] });
 }

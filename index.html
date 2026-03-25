@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Штаб охотников на демонов</title>
+<style>
+body{
+font-family:Arial;
+background:#111;
+color:white;
+margin:40px;
+}
+h1{color:#ff4d4d;}
+.article{
+background:#222;
+padding:15px;
+border-radius:10px;
+margin-top:20px;
+}
+button{
+margin-top:10px;
+padding:6px 10px;
+cursor:pointer;
+}
+.comment{
+background:#333;
+margin-top:8px;
+padding:6px;
+border-radius:6px;
+}
+</style>
+</head>
+<body>
+
+<h1>⚔️ Штаб охотников на демонов</h1>
+
+<div class="article">
+<h2>Тандзиро Камадо</h2>
+
+<p>
+Тандзиро стал охотником на демонов чтобы спасти свою сестру Нэдзуко.
+</p>
+
+<button onclick="like()">❤️ Реакция <span id="likes">0</span></button>
+
+<h3>Комментарии</h3>
+
+<div id="comments"></div>
+
+<input id="commentInput" placeholder="Напиши комментарий">
+<button onclick="addComment()">Отправить</button>
+
+</div>
+
+<script>
+let likes=0;
+
+function like(){
+likes++;
+document.getElementById("likes").innerText=likes;
+}
+
+function addComment(){
+let text=document.getElementById("commentInput").value;
+if(text==="") return;
+
+let div=document.createElement("div");
+div.className="comment";
+div.innerText=text;
+
+document.getElementById("comments").appendChild(div);
+document.getElementById("commentInput").value="";
+}
+</script>
+
+</body>
+</html>
