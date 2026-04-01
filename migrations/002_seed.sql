@@ -2,21 +2,23 @@
 -- SportData: Seed Data
 -- ============================================
 
--- Marketplaces
-INSERT INTO marketplaces (slug, name, api_base_url) VALUES
-  ('wildberries', 'Wildberries', 'https://statistics-api.wildberries.ru'),
-  ('ozon', 'Ozon', 'https://api-seller.ozon.ru'),
-  ('yandex_market', 'Яндекс Маркет', 'https://api.partner.market.yandex.ru')
+-- Departments
+INSERT INTO departments (slug, name) VALUES
+  ('running', 'Бег и лёгкая атлетика'),
+  ('fitness', 'Фитнес и тренировки'),
+  ('swimming', 'Плавание'),
+  ('team_sports', 'Командные виды спорта'),
+  ('outdoor', 'Туризм и аутдор')
 ON CONFLICT (slug) DO NOTHING;
 
 -- Categories
-INSERT INTO categories (slug, name) VALUES
-  ('running', 'Бег'),
-  ('fitness', 'Фитнес'),
-  ('swimming', 'Плавание'),
-  ('team_sports', 'Командные виды'),
-  ('outdoor', 'Туризм'),
-  ('accessories', 'Аксессуары')
+INSERT INTO categories (slug, name, department_id) VALUES
+  ('running', 'Бег', (SELECT id FROM departments WHERE slug='running')),
+  ('fitness', 'Фитнес', (SELECT id FROM departments WHERE slug='fitness')),
+  ('swimming', 'Плавание', (SELECT id FROM departments WHERE slug='swimming')),
+  ('team_sports', 'Командные виды', (SELECT id FROM departments WHERE slug='team_sports')),
+  ('outdoor', 'Туризм', (SELECT id FROM departments WHERE slug='outdoor')),
+  ('accessories', 'Аксессуары', NULL)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Products (30 items)
@@ -50,7 +52,8 @@ INSERT INTO products (name, sku, barcode, cost_price, category_id) VALUES
   ('Сумка спортивная 30л', 'ACC-002', '4600006000028', 550, (SELECT id FROM categories WHERE slug='accessories')),
   ('Повязка на голову', 'ACC-003', '4600006000035', 90, (SELECT id FROM categories WHERE slug='accessories')),
   ('Часы спортивные Basic', 'ACC-004', '4600006000042', 1500, (SELECT id FROM categories WHERE slug='accessories')),
-  ('Пояс для бега', 'ACC-005', '4600006000059', 200, (SELECT id FROM categories WHERE slug='accessories'));
+  ('Пояс для бега', 'ACC-005', '4600006000059', 200, (SELECT id FROM categories WHERE slug='accessories'))
+ON CONFLICT (sku) DO NOTHING;
 
 -- Generate 90 days of sales data
 DO $$
@@ -66,33 +69,32 @@ DECLARE
   profit NUMERIC;
   cost NUMERIC;
 BEGIN
+  -- Skip if data already exists
+  IF (SELECT COUNT(*) FROM sales) > 0 THEN
+    RAISE NOTICE 'Sales data already exists, skipping seed';
+    RETURN;
+  END IF;
+
   FOR d IN SELECT generate_series(CURRENT_DATE - 90, CURRENT_DATE - 1, '1 day'::interval)::date
   LOOP
     FOR p_id IN SELECT id FROM products
     LOOP
       FOR mp_id IN SELECT id FROM marketplaces
       LOOP
-        -- Not every product sells every day on every marketplace
-        IF random() > 0.35 THEN
-          CONTINUE;
-        END IF;
+        IF random() > 0.35 THEN CONTINUE; END IF;
 
         SELECT cost_price INTO cost FROM products WHERE id = p_id;
-        base_price := cost * (1.8 + random() * 0.8);  -- markup 1.8x-2.6x
+        base_price := cost * (1.8 + random() * 0.8);
         qty := (1 + floor(random() * 8))::int;
         rev := ROUND((base_price * qty)::numeric, 2);
-        comm := ROUND((rev * (0.05 + random() * 0.15))::numeric, 2);  -- 5-20% commission
-        logi := ROUND((qty * (50 + random() * 150))::numeric, 2);     -- 50-200 per unit
+        comm := ROUND((rev * (0.05 + random() * 0.15))::numeric, 2);
+        logi := ROUND((qty * (50 + random() * 150))::numeric, 2);
         profit := ROUND((rev - (cost * qty) - comm - logi)::numeric, 2);
 
         INSERT INTO sales (product_id, marketplace_id, sale_date, quantity, revenue, net_profit, commission, logistics_cost)
         VALUES (p_id, mp_id, d, qty, rev, profit, comm, logi);
 
-        -- Returns ~8% chance
         IF random() < 0.08 THEN
-          INSERT INTO sales (product_id, marketplace_id, sale_date, quantity, revenue, net_profit, commission, logistics_cost)
-          VALUES (p_id, mp_id, d, -1, -base_price, -(profit/qty), 0, 0);
-
           INSERT INTO returns (product_id, marketplace_id, quantity, return_date)
           VALUES (p_id, mp_id, 1, d);
         END IF;
@@ -101,23 +103,11 @@ BEGIN
   END LOOP;
 END $$;
 
--- Inventory
+-- Inventory snapshots
 INSERT INTO inventory (product_id, marketplace_id, warehouse, quantity, recorded_at)
-SELECT
-  p.id,
-  m.id,
-  CASE (floor(random()*3))::int
-    WHEN 0 THEN 'Москва'
-    WHEN 1 THEN 'Санкт-Петербург'
-    ELSE 'Казань'
-  END,
-  (10 + floor(random() * 200))::int,
-  NOW()
-FROM products p
-CROSS JOIN marketplaces m
-WHERE random() > 0.3;
-
--- Default user
-INSERT INTO users (email, password_hash, name, role) VALUES
-  ('admin@sportdata.ru', 'no_password_set', 'Администратор', 'admin')
-ON CONFLICT (email) DO NOTHING;
+SELECT p.id, m.id,
+  CASE (floor(random()*3))::int WHEN 0 THEN 'Москва' WHEN 1 THEN 'Санкт-Петербург' ELSE 'Казань' END,
+  (10 + floor(random() * 200))::int, NOW()
+FROM products p CROSS JOIN marketplaces m
+WHERE random() > 0.3
+ON CONFLICT DO NOTHING;

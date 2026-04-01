@@ -86,7 +86,7 @@ etl-dev: ## Запустить ETL workers
 
 migrate: ## Применить миграции
 	@echo "$(YELLOW)Применяю миграции...$(NC)"
-	@for f in api-gateway/migrations/*.sql; do \
+	@for f in migrations/*.sql; do \
 		echo "  → $$f"; \
 		docker compose exec -T postgres psql -U sportdata_admin -d sportdata -f /docker-entrypoint-initdb.d/$$(basename $$f); \
 	done
