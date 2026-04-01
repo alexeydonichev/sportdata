@@ -90,6 +90,36 @@ services:
     networks:
       - sportdata-net
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: sportdata-frontend
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-sportdata}
+      DB_USER: ${POSTGRES_USER:-sportdata_admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${PASETO_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CREDENTIALS_MASTER_KEY: ${CREDENTIALS_MASTER_KEY:-${ENCRYPTION_KEY}}
+      CRON_SECRET: ${CRON_SECRET}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-SportData}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sportdata-net
+
 volumes:
   postgres_data:
     driver: local
