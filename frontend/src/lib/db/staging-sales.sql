@@ -1,0 +1,21 @@
+CREATE UNLOGGED TABLE IF NOT EXISTS staging_sales_update (
+  product_id INT,
+  sale_date DATE,
+  logistics_cost NUMERIC,
+  commission NUMERIC,
+  penalty NUMERIC,
+  acquiring_fee NUMERIC,
+  storage_fee NUMERIC,
+  deduction NUMERIC,
+  acceptance_cost NUMERIC,
+  return_logistic_cost NUMERIC,
+  additional_payment NUMERIC,
+  spp_percent NUMERIC,
+  commission_percent NUMERIC,
+  retail_price NUMERIC,
+  discount_price NUMERIC,
+  site_country TEXT,
+  office_name TEXT,
+  ppvz_office_name TEXT,
+  report_id BIGINT
+);

@@ -1,0 +1,3 @@
+#!/bin/bash
+
+psql -h localhost -U sportdata_admin -d sportdata -f scripts/run_analytics.sql

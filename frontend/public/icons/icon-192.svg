@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="36" fill="#0A0A0A"/>
+  <text x="96" y="75" text-anchor="middle" font-family="system-ui,sans-serif" font-size="44" font-weight="700" fill="#F5F5F5">Your</text>
+  <text x="96" y="128" text-anchor="middle" font-family="system-ui,sans-serif" font-size="44" font-weight="300" fill="#F5F5F5">Fit</text>
+  <rect x="38" y="143" width="116" height="3" rx="1.5" fill="#22C55E" opacity="0.8"/>
+</svg>

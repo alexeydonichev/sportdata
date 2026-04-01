@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sportdata-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sportdata}
+      POSTGRES_USER: ${POSTGRES_USER:-sportdata_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./api-gateway/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sportdata_admin} -d ${POSTGRES_DB:-sportdata}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sportdata-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: sportdata-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sportdata-net
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: sportdata-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
+      REDIS_URL: redis:${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      PASETO_SECRET_KEY: ${PASETO_SECRET_KEY}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ETL_SERVICE_SECRET: ${ETL_SERVICE_SECRET}
+      ETL_SERVICE_URL: http://etl-worker:8081
+      GIN_MODE: release
+      PORT: "${API_PORT:-8080}"
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD}
+      SUPERADMIN_TOTP_SECRET: ${SUPERADMIN_TOTP_SECRET}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+    ports:
+      - "${API_PORT:-8080}:${API_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - sportdata-net
+
+  etl-worker:
+    build:
+      context: ./etl-service
+      dockerfile: Dockerfile
+    container_name: sportdata-etl
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
+      REDIS_URL: redis:${REDIS_PORT:-6379}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ETL_SERVICE_SECRET: ${ETL_SERVICE_SECRET}
+      ETL_LISTEN: ":8081"
+      SYNC_INTERVAL: "30m"
+    expose:
+      - "8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sportdata-net
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  sportdata-net:
+    driver: bridge
