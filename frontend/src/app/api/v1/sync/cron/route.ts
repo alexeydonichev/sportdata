@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import pool from "@/lib/db";
-import { runWBSync } from "@/lib/wb-sync";
+
+const ETL_URL = process.env.ETL_SERVICE_URL || "http://localhost:8081";
+const ETL_SECRET = process.env.ETL_SECRET || "";
 
 export async function GET(req: NextRequest) {
   const secret =
@@ -12,37 +13,37 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const { rows: marketplaces } = await pool.query(
-      `SELECT m.id, m.slug FROM marketplaces m
-       JOIN marketplace_credentials mc ON mc.marketplace_id = m.id
-       WHERE mc.is_active = true`
-    );
+    const res = await fetch(`${ETL_URL}/api/trigger`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ETL-Secret": ETL_SECRET,
+      },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000),
+    });
 
-    const jobs = [];
-    for (const mp of marketplaces) {
-      const { rows } = await pool.query(
-        `INSERT INTO sync_jobs (marketplace_id, job_type, status, created_at)
-         VALUES ($1, 'full_sync', 'pending', NOW())
-         RETURNING id`,
-        [mp.id]
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[cron] ETL responded ${res.status}: ${text}`);
+      return NextResponse.json(
+        { error: `ETL error: ${res.status}` },
+        { status: 502 }
       );
-      const jobId = rows[0].id;
-      jobs.push({ id: jobId, slug: mp.slug });
-
-      if (mp.slug === "wildberries") {
-        runWBSync(jobId).catch((err) =>
-          console.error(`[Cron] WB job ${jobId} failed:`, err)
-        );
-      }
     }
+
+    const data = await res.json();
 
     return NextResponse.json({
       success: true,
-      message: `Cron: запущено ${jobs.length} синхронизаций`,
-      jobs,
+      message: "Cron: синхронизация запущена через ETL сервис",
+      etl: data,
     });
   } catch (e: unknown) {
     console.error("Cron sync error:", e);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "ETL сервис недоступен" },
+      { status: 503 }
+    );
   }
 }
