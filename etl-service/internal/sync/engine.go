@@ -104,9 +104,13 @@ func (e *Engine) runCredential(ctx context.Context, cred *models.Credential) {
 	log.Printf("[sync] starting %s (cred #%d: %s)...",
 		cred.MarketplaceSlug, cred.ID, cred.Name)
 
+	// Report API для WB (полные данные), Statistics API для остальных
 	e.runJob(ctx, cred, "sales", func(ctx context.Context) (int, error) {
 		dateTo := time.Now()
 		dateFrom := dateTo.AddDate(0, 0, -30)
+		if rp, ok := provider.(ReportProvider); ok {
+			return rp.SyncReport(ctx, cred, apiKey, dateFrom, dateTo)
+		}
 		return provider.SyncSales(ctx, cred, apiKey, dateFrom, dateTo)
 	})
 
