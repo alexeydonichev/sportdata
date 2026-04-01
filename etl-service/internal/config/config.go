@@ -23,7 +23,7 @@ func Load() *Config {
 		DatabaseURL:    getEnv("DATABASE_URL", "postgres://sportdata_admin:SportData_S3cure_2025!@postgres:5432/sportdata?sslmode=disable"),
 		RedisURL:       getEnv("REDIS_URL", "redis:6379"),
 		EncryptionKey:  getEnv("ENCRYPTION_KEY", ""),
-		ETLSecret:      getEnv("ETL_SERVICE_SECRET", ""),
+		ETLSecret:      getEnv("ETL_SECRET", ""),
 		ListenAddr:     getEnv("ETL_LISTEN", ":8081"),
 		WorkerInterval: getEnv("SYNC_INTERVAL", "30m"),
 	}
