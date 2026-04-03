@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -104,9 +106,9 @@ func (h *Handler) getUserMarketplaceAccess(ctx context.Context, userID string) [
 
 type CreateUserRequest struct {
 	Email             string `json:"email" binding:"required,email"`
-	Password          string `json:"password" binding:"required,min=10"`
+	Password          string `json:"password" binding:"required,min=8"`
 	FirstName         string `json:"first_name" binding:"required"`
-	LastName          string `json:"last_name" binding:"required"`
+	LastName          string `json:"last_name"`
 	RoleSlug          string `json:"role" binding:"required"`
 	DepartmentIDs     []int  `json:"department_ids"`
 	MarketplaceIDs    []int  `json:"marketplace_ids"`
@@ -115,7 +117,8 @@ type CreateUserRequest struct {
 func (h *Handler) CreateUser(c *gin.Context) {
 	var req CreateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный формат"})
+		log.Printf("CreateUser validation error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный формат: " + err.Error()})
 		return
 	}
 
@@ -142,11 +145,20 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		RETURNING id
 	`, req.Email, string(hash), req.FirstName, req.LastName, req.RoleSlug).Scan(&userID)
 
+
 	if err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "пользователь с таким email уже существует"})
+		if err.Error() == "no rows in result set" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "роль не найдена: " + req.RoleSlug})
+			return
+		}
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "unique constraint") {
+			c.JSON(http.StatusConflict, gin.H{"error": "пользователь с таким email уже существует"})
+			return
+		}
+		log.Printf("CreateUser error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "ошибка создания пользователя"})
 		return
 	}
-
 	for _, deptID := range req.DepartmentIDs {
 		tx.Exec(ctx, `
 			INSERT INTO user_departments (user_id, department_id) VALUES ($1, $2)
@@ -185,7 +197,8 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	userID := c.Param("id")
 	var req UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный формат"})
+		log.Printf("CreateUser validation error: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный формат: " + err.Error()})
 		return
 	}
 

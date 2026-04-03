@@ -19,7 +19,8 @@ INSERT INTO roles (slug, name, level, is_hidden) VALUES
     ('owner', 'Собственник', 1, FALSE),
     ('director', 'Управляющий директор', 2, FALSE),
     ('head', 'Директор направления', 3, FALSE),
-    ('manager', 'Менеджер', 4, FALSE)
+    ('manager', 'Менеджер', 4, FALSE),
+    ('analyst', 'Аналитик', 5, FALSE)
 ON CONFLICT (slug) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS users (

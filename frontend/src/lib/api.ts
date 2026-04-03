@@ -54,9 +54,32 @@ class ApiClient {
     }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "HTTP " + res.status);
+      const error = new Error(err.error || "HTTP " + res.status) as Error & { response?: { data?: { error?: string } } };
+      error.response = { data: err };
+      throw error;
     }
     return res.json();
+  }
+
+  // Generic REST methods
+  async get<T = any>(url: string): Promise<{ data: T }> {
+    const data = await this.request<T>(url);
+    return { data };
+  }
+
+  async post<T = any>(url: string, body?: any): Promise<{ data: T }> {
+    const data = await this.request<T>(url, { method: "POST", body: body ? JSON.stringify(body) : undefined });
+    return { data };
+  }
+
+  async patch<T = any>(url: string, body?: any): Promise<{ data: T }> {
+    const data = await this.request<T>(url, { method: "PATCH", body: body ? JSON.stringify(body) : undefined });
+    return { data };
+  }
+
+  async delete<T = any>(url: string): Promise<{ data: T }> {
+    const data = await this.request<T>(url, { method: "DELETE" });
+    return { data };
   }
 
   async login(email: string, password: string) {
@@ -84,9 +107,7 @@ class ApiClient {
     return this.request<ChartDataPoint[]>("/api/v1/dashboard/chart?" + qs.toString());
   }
 
-  categories() {
-    return this.request<Category[]>("/api/v1/categories");
-  }
+  categories() { return this.request<Category[]>("/api/v1/categories"); }
 
   products(params: { category?: string; marketplace?: string; search?: string; sort?: string; order?: string } = {}) {
     const qs = new URLSearchParams();
@@ -169,54 +190,6 @@ class ApiClient {
     return this.request("/api/v1/sync/credentials?marketplace_id=" + marketplaceId, { method: "DELETE" });
   }
 
-  // ── Admin: Users ──
-
-  adminUsers() {
-    return this.request<{ users: AdminUser[] }>("/api/v1/admin/users");
-  }
-
-  adminCreateUser(data: { email: string; password: string; name: string; role: string; scopes?: AdminScope[] }) {
-    return this.request<{ user: AdminUser }>("/api/v1/admin/users", {
-      method: "POST", body: JSON.stringify(data),
-    });
-  }
-
-  adminUpdateUser(id: number, data: { name?: string; role?: string; is_active?: boolean; scopes?: AdminScope[] }) {
-    return this.request<{ user: AdminUser }>("/api/v1/admin/users/" + id, {
-      method: "PUT", body: JSON.stringify(data),
-    });
-  }
-
-  adminDeleteUser(id: number) {
-    return this.request<{ success: boolean }>("/api/v1/admin/users/" + id, { method: "DELETE" });
-  }
-
-  adminResetPassword(id: number, password: string) {
-    return this.request<{ success: boolean }>("/api/v1/admin/users/" + id, {
-      method: "PATCH", body: JSON.stringify({ password }),
-    });
-  }
-
-  // ── Admin: Invites ──
-
-  adminInvites() {
-    return this.request<{ invites: AdminInvite[] }>("/api/v1/admin/invites");
-  }
-
-  adminCreateInvite(data: { email: string; role: string; scopes?: AdminScope[]; expires_hours?: number }) {
-    return this.request<{ invite: AdminInvite }>("/api/v1/admin/invites", {
-      method: "POST", body: JSON.stringify(data),
-    });
-  }
-
-  adminDeleteInvite(id: number) {
-    return this.request<{ success: boolean }>("/api/v1/admin/invites?id=" + id, { method: "DELETE" });
-  }
-
-  // ── Auth: Register ──
-
-  // ── Returns Analytics ──
-
   returnsAnalytics(params: { period?: string; category?: string } = {}) {
     const qs = new URLSearchParams();
     if (params.period) qs.set("period", params.period);
@@ -231,39 +204,16 @@ class ApiClient {
   }
 }
 
-// ── Admin types ──
-
-export interface AdminScope {
-  scope_type: string;
-  scope_value: string | null;
-}
-
+export interface AdminScope { scope_type: string; scope_value: string | null; }
 export interface AdminUser {
-  id: number;
-  email: string;
-  name: string | null;
-  role: string;
-  role_level: number;
-  is_active: boolean;
-  invited_by: number | null;
-  inviter_email: string | null;
-  last_login_at: string | null;
-  created_at: string;
-  scopes: AdminScope[];
+  id: number; email: string; name: string | null; role: string; role_level: number;
+  is_active: boolean; invited_by: number | null; inviter_email: string | null;
+  last_login_at: string | null; created_at: string; scopes: AdminScope[];
 }
-
 export interface AdminInvite {
-  id: number;
-  token: string;
-  email: string;
-  role_level: number;
-  role_name: string;
-  scopes: AdminScope[];
-  created_by: number;
-  creator_email: string;
-  expires_at: string;
-  used_at: string | null;
-  created_at: string;
+  id: number; token: string; email: string; role_level: number; role_name: string;
+  scopes: AdminScope[]; created_by: number; creator_email: string;
+  expires_at: string; used_at: string | null; created_at: string;
 }
 
 export const api = new ApiClient();
