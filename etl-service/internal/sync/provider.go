@@ -20,3 +20,9 @@ type Provider interface {
 type ReportProvider interface {
 	SyncReport(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error)
 }
+
+// ReportDetailProvider — провайдер с поддержкой географии и возвратов
+type ReportDetailProvider interface {
+	SyncReportDetail(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error)
+	SyncReturnsFromReport(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error)
+}

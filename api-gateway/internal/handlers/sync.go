@@ -278,7 +278,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 	if etlURL == "" {
 		etlURL = "http://etl-worker:8081"
 	}
-	etlSecret := os.Getenv("ETL_SERVICE_SECRET")
+	etlSecret := os.Getenv("ETL_SECRET")
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"marketplace":   req.Marketplace,

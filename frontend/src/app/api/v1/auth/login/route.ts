@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     if (!email || !password) return NextResponse.json({ error: "Email и пароль обязательны" }, { status: 400 });
 
     const { rows } = await pool.query(
-      `SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, u.is_active,
+      `SELECT u.id, u.email, u.password_hash, u.first_name, u.last_name, u.is_active, u.is_hidden,
               r.slug as role, r.level as role_level
        FROM users u JOIN roles r ON r.id = u.role_id
        WHERE u.email = $1`, [email.toLowerCase()]
@@ -25,14 +25,29 @@ export async function POST(req: NextRequest) {
     await pool.query(`UPDATE users SET last_login_at = NOW() WHERE id = $1`, [user.id]);
 
     const token = jwt.sign(
-      { sub: user.id, email: user.email, role: user.role, role_level: user.role_level },
+      {
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+        role_level: user.role_level,
+        hid: user.is_hidden || false,
+      },
       process.env.JWT_SECRET!,
       { expiresIn: "7d" }
     );
 
+    // Маскировка super_admin → owner для клиента
+    const displayRole = user.is_hidden ? "owner" : user.role;
+
     return NextResponse.json({
       token,
-      user: { id: user.id, email: user.email, first_name: user.first_name, last_name: user.last_name, role: user.role }
+      user: {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        role: displayRole,
+      },
     });
   } catch (e) {
     console.error("Login error:", e);

@@ -20,40 +20,46 @@ func NewProvider(db *pgxpool.Pool) *Provider {
 	return &Provider{db: db}
 }
 
-func (p *Provider) Name() string           { return "Wildberries" }
+func (p *Provider) Name() string            { return "Wildberries" }
 func (p *Provider) MarketplaceSlug() string { return "wildberries" }
 
-// ──────────────────────────────────────────
-// Sales sync — full WB report fields
-// ──────────────────────────────────────────
 func (p *Provider) SyncSales(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error) {
 	client := NewClient(apiKey)
 
-	sales, err := client.GetSales(dateFrom)
+	log.Printf("[wb] Fetching sales from Report Detail API: %s to %s", dateFrom.Format("2006-01-02"), dateTo.Format("2006-01-02"))
+
+	items, err := client.GetReportDetailByWeeks(dateFrom, dateTo)
 	if err != nil {
-		return 0, fmt.Errorf("fetch sales: %w", err)
+		return 0, fmt.Errorf("fetch report detail: %w", err)
 	}
-	if len(sales) == 0 {
+
+	if len(items) == 0 {
+		log.Printf("[wb] No items found")
 		return 0, nil
 	}
 
+	log.Printf("[wb] Got %d report items, processing...", len(items))
+
 	mpID := cred.MarketplaceID
 
-	// Batch ensure categories + products (like wb-sync.ts)
-	p.ensureCategoriesFromSales(ctx, sales)
-	p.ensureProductsFromSales(ctx, sales)
+	p.ensureCategoriesFromReport(ctx, items)
+	p.ensureProductsFromReport(ctx, items)
+
+	// Дедуплицируем по ключу (srid + sale_date) ПЕРЕД батчами
+	dedupItems := p.deduplicateItems(items)
+	log.Printf("[wb] After dedup: %d unique records", len(dedupItems))
 
 	processed := 0
 	const batchSize = 500
 
-	for i := 0; i < len(sales); i += batchSize {
+	for i := 0; i < len(dedupItems); i += batchSize {
 		end := i + batchSize
-		if end > len(sales) {
-			end = len(sales)
+		if end > len(dedupItems) {
+			end = len(dedupItems)
 		}
-		batch := sales[i:end]
+		batch := dedupItems[i:end]
 
-		n, err := p.insertSalesBatch(ctx, batch, mpID)
+		n, err := p.insertSalesFromReportBatch(ctx, batch, mpID)
 		if err != nil {
 			log.Printf("[wb] batch %d-%d error: %v", i, end, err)
 			continue
@@ -61,87 +67,119 @@ func (p *Provider) SyncSales(ctx context.Context, cred *models.Credential, apiKe
 		processed += n
 	}
 
+	log.Printf("[wb] Processed %d sales records", processed)
 	return processed, nil
 }
 
-func (p *Provider) insertSalesBatch(ctx context.Context, sales []SaleItem, mpID int) (int, error) {
-	if len(sales) == 0 {
-		return 0, nil
-	}
+// deduplicateItems убирает дубликаты по ключу srid+sale_date
+func (p *Provider) deduplicateItems(items []ReportDetailItem) []ReportDetailItem {
+	seen := make(map[string]int)
+	result := make([]ReportDetailItem, 0, len(items))
 
-	var sb strings.Builder
-	args := make([]interface{}, 0, len(sales)*20)
-	idx := 0
-	count := 0
-
-	for _, s := range sales {
-		if s.SaleID == "" {
+	for _, item := range items {
+		srid := item.SRId
+		if srid == "" {
 			continue
 		}
 
-		productID := p.resolveProductByNmId(ctx, s.NmId, s.SupplierArticle)
-		if productID == 0 {
-			continue
+		saleDate := item.SaleDt
+		if saleDate == "" {
+			saleDate = item.RRDt
 		}
-
-		saleDate := s.Date
 		if len(saleDate) >= 10 {
 			saleDate = saleDate[:10]
 		}
 
-		qty := 1
-		if s.IsReturn {
-			qty = -1
+		key := srid + "|" + saleDate
+
+		if idx, exists := seen[key]; exists {
+			result[idx].Quantity += item.Quantity
+			result[idx].RetailAmount += item.RetailAmount
+			result[idx].PPVZForPay += item.PPVZForPay
+			result[idx].PPVZSalesCommission += item.PPVZSalesCommission
+			result[idx].DeliveryRub += item.DeliveryRub
+			result[idx].RebillLogisticCost += item.RebillLogisticCost
+			result[idx].Penalty += item.Penalty
+		} else {
+			seen[key] = len(result)
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
+func (p *Provider) insertSalesFromReportBatch(ctx context.Context, items []ReportDetailItem, mpID int) (int, error) {
+	if len(items) == 0 {
+		return 0, nil
+	}
+
+	var sb strings.Builder
+	args := make([]interface{}, 0, len(items)*27)
+	idx := 0
+	count := 0
+
+	for _, item := range items {
+		srid := item.SRId
+		if srid == "" {
+			continue
 		}
 
-		revenue := s.FinishedPrice
+		productID := p.resolveProductByNmId(ctx, item.NmId, item.SAName)
+		if productID == 0 {
+			continue
+		}
+
+		saleDate := item.SaleDt
+		if saleDate == "" {
+			saleDate = item.RRDt
+		}
+		if len(saleDate) >= 10 {
+			saleDate = saleDate[:10]
+		}
+
+		qty := item.Quantity
+		if item.DocTypeName == "Возврат" || item.ReturnAmount > 0 {
+			if qty > 0 {
+				qty = -qty
+			}
+		}
+
+		revenue := item.RetailPriceWithDisc
 		if revenue == 0 {
-			revenue = s.PriceWithDisc
+			revenue = item.RetailAmount
 		}
-		forPay := s.ForPay
-		commission := revenue - forPay
-		if commission < 0 {
-			commission = 0
-		}
+
+		forPay := item.PPVZForPay
+		commission := item.PPVZSalesCommission
+		logistics := item.DeliveryRub + item.RebillLogisticCost
+		penalty := item.Penalty
 
 		var costPrice float64
 		p.db.QueryRow(ctx, "SELECT COALESCE(cost_price,0) FROM products WHERE id=$1", productID).Scan(&costPrice)
-		netProfit := forPay - costPrice*float64(absInt(qty))
+		netProfit := forPay - costPrice*float64(absInt(qty)) - logistics
 
 		if count > 0 {
 			sb.WriteString(",")
 		}
 
 		sb.WriteString(fmt.Sprintf(
-			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+			"($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			idx+1, idx+2, idx+3, idx+4, idx+5, idx+6, idx+7, idx+8, idx+9, idx+10,
 			idx+11, idx+12, idx+13, idx+14, idx+15, idx+16, idx+17, idx+18, idx+19, idx+20,
+			idx+21, idx+22, idx+23, idx+24, idx+25, idx+26, idx+27,
 		))
 
 		args = append(args,
-			productID,          // 1  product_id
-			mpID,               // 2  marketplace_id
-			saleDate,           // 3  sale_date
-			qty,                // 4  quantity
-			revenue,            // 5  revenue
-			commission,         // 6  commission
-			0.0,                // 7  logistics_cost
-			netProfit,          // 8  net_profit
-			forPay,             // 9  for_pay
-			s.SaleID,           // 10 sale_id
-			0.0,                // 11 penalty
-			s.TotalPrice,       // 12 retail_price
-			0.0,                // 13 retail_amount
-			s.PriceWithDisc,    // 14 discount_price
-			s.FinishedPrice,    // 15 finished_price
-			s.NmId,             // 16 nm_id
-			s.Brand,            // 17 brand
-			s.Subject,          // 18 subject_name
-			s.SupplierArticle,  // 19 supplier_article
-			s.Barcode,          // 20 barcode
+			productID, mpID, saleDate, qty, revenue, commission, logistics, netProfit, forPay, srid,
+			penalty, item.RetailPrice, item.RetailAmount, item.RetailPriceWithDisc, item.RetailPriceWithDisc,
+			item.NmId, nilIfEmpty(item.BrandName), nilIfEmpty(item.SubjectName), nilIfEmpty(item.SAName),
+			nilIfEmpty(item.Barcode), nilIfEmpty(item.CountryName), nilIfEmpty(item.OblastOkrugName),
+			nilIfEmpty(item.OfficeName), nilIfEmpty(item.DocTypeName), nilIfEmpty(item.SupplierOperName),
+			nilIfEmpty(item.OrderDt), nilIfEmpty(srid),
 		)
 
-		idx += 20
+		idx += 27
 		count++
 	}
 
@@ -153,15 +191,25 @@ func (p *Provider) insertSalesBatch(ctx context.Context, sales []SaleItem, mpID 
 		(product_id, marketplace_id, sale_date, quantity, revenue, commission,
 		 logistics_cost, net_profit, for_pay, sale_id, penalty, retail_price,
 		 retail_amount, discount_price, finished_price, nm_id, brand,
-		 subject_name, supplier_article, barcode)
+		 subject_name, supplier_article, barcode, country, region, warehouse,
+		 doc_type_name, supplier_oper_name, order_dt, srid)
 		VALUES ` + sb.String() + `
 		ON CONFLICT (sale_id, marketplace_id, sale_date)
 		DO UPDATE SET
+			quantity = EXCLUDED.quantity,
 			revenue = EXCLUDED.revenue,
 			for_pay = EXCLUDED.for_pay,
 			commission = EXCLUDED.commission,
+			logistics_cost = EXCLUDED.logistics_cost,
 			net_profit = EXCLUDED.net_profit,
 			finished_price = EXCLUDED.finished_price,
+			discount_price = EXCLUDED.discount_price,
+			penalty = EXCLUDED.penalty,
+			country = COALESCE(EXCLUDED.country, sales.country),
+			region = COALESCE(EXCLUDED.region, sales.region),
+			warehouse = COALESCE(EXCLUDED.warehouse, sales.warehouse),
+			doc_type_name = COALESCE(EXCLUDED.doc_type_name, sales.doc_type_name),
+			supplier_oper_name = COALESCE(EXCLUDED.supplier_oper_name, sales.supplier_oper_name),
 			brand = COALESCE(EXCLUDED.brand, sales.brand),
 			subject_name = COALESCE(EXCLUDED.subject_name, sales.subject_name)`
 
@@ -173,9 +221,6 @@ func (p *Provider) insertSalesBatch(ctx context.Context, sales []SaleItem, mpID 
 	return count, nil
 }
 
-// ──────────────────────────────────────────
-// Stocks sync — writes to inventory table
-// ──────────────────────────────────────────
 func (p *Provider) SyncStocks(ctx context.Context, cred *models.Credential, apiKey string) (int, error) {
 	client := NewClient(apiKey)
 
@@ -188,10 +233,7 @@ func (p *Provider) SyncStocks(ctx context.Context, cred *models.Credential, apiK
 	}
 
 	mpID := cred.MarketplaceID
-
-	// Clear old inventory for this marketplace (same as wb-sync.ts)
-	_, _ = p.db.Exec(ctx, "DELETE FROM inventory WHERE marketplace_id=$1", mpID)
-
+	p.db.Exec(ctx, "DELETE FROM inventory WHERE marketplace_id=$1", mpID)
 	p.ensureProductsFromStocks(ctx, stocks)
 
 	processed := 0
@@ -214,12 +256,10 @@ func (p *Provider) SyncStocks(ctx context.Context, cred *models.Credential, apiK
 			if productID == 0 {
 				continue
 			}
-
 			wh := s.WarehouseName
 			if wh == "" {
 				wh = "WB"
 			}
-
 			if count > 0 {
 				sb.WriteString(",")
 			}
@@ -230,10 +270,8 @@ func (p *Provider) SyncStocks(ctx context.Context, cred *models.Credential, apiK
 		}
 
 		if count > 0 {
-			query := `INSERT INTO inventory (product_id, marketplace_id, warehouse, quantity, recorded_at)
-				VALUES ` + sb.String()
-			_, err := p.db.Exec(ctx, query, args...)
-			if err != nil {
+			query := `INSERT INTO inventory (product_id, marketplace_id, warehouse, quantity, recorded_at) VALUES ` + sb.String()
+			if _, err := p.db.Exec(ctx, query, args...); err != nil {
 				log.Printf("[wb] inventory batch error: %v", err)
 				continue
 			}
@@ -244,31 +282,26 @@ func (p *Provider) SyncStocks(ctx context.Context, cred *models.Credential, apiK
 	return processed, nil
 }
 
-// ──────────────────────────────────────────
-// Product resolution — matches wb-sync.ts logic
-// ──────────────────────────────────────────
 func (p *Provider) resolveProductByNmId(ctx context.Context, nmId int64, sku string) int {
 	if nmId > 0 {
 		var id int
-		err := p.db.QueryRow(ctx, "SELECT id FROM products WHERE nm_id=$1", nmId).Scan(&id)
-		if err == nil {
+		if err := p.db.QueryRow(ctx, "SELECT id FROM products WHERE nm_id=$1", nmId).Scan(&id); err == nil {
 			return id
 		}
 	}
 	if sku != "" {
 		var id int
-		err := p.db.QueryRow(ctx, "SELECT id FROM products WHERE sku=$1", sku).Scan(&id)
-		if err == nil {
+		if err := p.db.QueryRow(ctx, "SELECT id FROM products WHERE sku=$1", sku).Scan(&id); err == nil {
 			return id
 		}
 	}
 	return 0
 }
 
-func (p *Provider) ensureCategoriesFromSales(ctx context.Context, sales []SaleItem) {
+func (p *Provider) ensureCategoriesFromReport(ctx context.Context, items []ReportDetailItem) {
 	seen := make(map[string]bool)
-	for _, s := range sales {
-		name := s.Subject
+	for _, item := range items {
+		name := item.SubjectName
 		if name == "" {
 			name = "Другое"
 		}
@@ -277,29 +310,27 @@ func (p *Provider) ensureCategoriesFromSales(ctx context.Context, sales []SaleIt
 			continue
 		}
 		seen[slug] = true
-		p.db.Exec(ctx,
-			"INSERT INTO categories (slug, name) VALUES ($1, $2) ON CONFLICT (slug) DO NOTHING",
-			slug, name)
+		p.db.Exec(ctx, "INSERT INTO categories (slug, name) VALUES ($1, $2) ON CONFLICT (slug) DO NOTHING", slug, name)
 	}
 }
 
-func (p *Provider) ensureProductsFromSales(ctx context.Context, sales []SaleItem) {
+func (p *Provider) ensureProductsFromReport(ctx context.Context, items []ReportDetailItem) {
 	seen := make(map[int64]bool)
-	for _, s := range sales {
-		if s.NmId == 0 || seen[s.NmId] {
+	for _, item := range items {
+		if item.NmId == 0 || seen[item.NmId] {
 			continue
 		}
-		seen[s.NmId] = true
+		seen[item.NmId] = true
 
-		sku := s.SupplierArticle
+		sku := item.SAName
 		if sku == "" {
-			sku = fmt.Sprintf("%d", s.NmId)
+			sku = fmt.Sprintf("%d", item.NmId)
 		}
-		name := s.Subject
+		name := item.SubjectName
 		if name == "" {
 			name = sku
 		}
-		catSlug := toSlug(s.Subject)
+		catSlug := toSlug(item.SubjectName)
 		if catSlug == "" {
 			catSlug = "drugoe"
 		}
@@ -316,7 +347,7 @@ func (p *Provider) ensureProductsFromSales(ctx context.Context, sales []SaleItem
 				category_id=EXCLUDED.category_id,
 				brand=COALESCE(EXCLUDED.brand, products.brand),
 				updated_at=NOW()`,
-			name, sku, nilIfEmpty(s.Barcode), catID, s.NmId, nilIfEmpty(s.Brand))
+			name, sku, nilIfEmpty(item.Barcode), catID, item.NmId, nilIfEmpty(item.BrandName))
 	}
 }
 
@@ -327,12 +358,10 @@ func (p *Provider) ensureProductsFromStocks(ctx context.Context, stocks []StockI
 			continue
 		}
 		seen[s.NmId] = true
-
 		sku := s.SupplierArticle
 		if sku == "" {
 			sku = fmt.Sprintf("%d", s.NmId)
 		}
-
 		p.db.Exec(ctx,
 			`INSERT INTO products (name, sku, barcode, cost_price, nm_id)
 			 VALUES ($1, $2, $3, 0, $4)
@@ -341,6 +370,10 @@ func (p *Provider) ensureProductsFromStocks(ctx context.Context, stocks []StockI
 				updated_at=NOW()`,
 			sku, sku, nilIfEmpty(s.Barcode), s.NmId)
 	}
+}
+
+func (p *Provider) SyncReport(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error) {
+	return p.SyncSales(ctx, cred, apiKey, dateFrom, dateTo)
 }
 
 func toSlug(name string) string {

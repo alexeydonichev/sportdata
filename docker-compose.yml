@@ -49,6 +49,7 @@ services:
       REDIS_URL: redis:${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       PASETO_SECRET_KEY: ${PASETO_SECRET_KEY}
+      JWT_SECRET: ${PASETO_SECRET_KEY}
       JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ETL_SECRET: ${ETL_SERVICE_SECRET}
@@ -81,7 +82,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ETL_SECRET: ${ETL_SERVICE_SECRET}
       ETL_LISTEN: ":8081"
-      SYNC_INTERVAL: "30m"
+      SYNC_INTERVAL: "6h"
     expose:
       - "8081"
     depends_on:
@@ -101,6 +102,8 @@ services:
       DB_HOST: postgres
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-sportdata}
+      ETL_SERVICE_URL: http://etl-worker:8081
+      ETL_SECRET: ${ETL_SERVICE_SECRET}
       DB_USER: ${POSTGRES_USER:-sportdata_admin}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       JWT_SECRET: ${PASETO_SECRET_KEY}

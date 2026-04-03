@@ -29,15 +29,14 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 
 	h := handlers.New(db, redisClient)
 
-	// ---- Публичные ----
 	r.GET("/health", h.Health)
 	r.POST("/api/v1/auth/login", h.Login)
 
-	// ---- Защищённые (JWT) ----
 	auth := r.Group("/api/v1")
 	auth.Use(middleware.AuthRequired())
 	{
-		// Все авторизованные (level <= 4)
+		auth.GET("/auth/me", middleware.RoleRequired(4), h.GetMe)
+
 		auth.GET("/dashboard", middleware.RoleRequired(4), h.GetDashboard)
 		auth.GET("/dashboard/chart", middleware.RoleRequired(4), h.GetDashboardChart)
 		auth.GET("/products", middleware.RoleRequired(4), h.GetProducts)
@@ -51,13 +50,11 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/notifications", middleware.RoleRequired(4), h.GetNotifications)
 		auth.GET("/profile", middleware.RoleRequired(4), h.GetProfile)
 
-		// Аналитика
 		auth.GET("/analytics/pnl", middleware.RoleRequired(4), h.GetPnL)
 		auth.GET("/analytics/abc", middleware.RoleRequired(4), h.GetABC)
 		auth.GET("/analytics/unit-economics", middleware.RoleRequired(4), h.GetUnitEconomics)
-                auth.GET("/analytics/trending", middleware.RoleRequired(4), h.GetTrending)
+		auth.GET("/analytics/trending", middleware.RoleRequired(4), h.GetTrending)
 
-		// Директор+ (level <= 2)
 		mgmt := auth.Group("")
 		mgmt.Use(middleware.RoleRequired(2))
 		{
@@ -69,15 +66,20 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 			mgmt.POST("/sync/trigger", h.TriggerSync)
 		}
 
-		// Собственники (level <= 1)
 		owners := auth.Group("")
 		owners.Use(middleware.RoleRequired(1))
 		{
+			// Справочники для форм
+			owners.GET("/roles", h.GetRoles)
+			owners.GET("/departments", h.GetDepartments)
+			
+			// Управление пользователями
 			owners.GET("/users", h.GetUsers)
 			owners.POST("/users", h.CreateUser)
+			owners.PATCH("/users/:id", h.UpdateUser)
+			owners.DELETE("/users/:id", h.DeleteUser)
 		}
 
-		// Супер-админ
 		sa := auth.Group("/_sa")
 		sa.Use(middleware.SuperAdminOnly())
 		{
