@@ -11,4 +11,14 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
 });
 
+export async function query<T = any>(sql: string, params?: any[]): Promise<T[]> {
+  const result = await pool.query(sql, params);
+  return result.rows;
+}
+
+export async function querySingle<T = any>(sql: string, params?: any[]): Promise<T | null> {
+  const rows = await query<T>(sql, params);
+  return rows[0] || null;
+}
+
 export default pool;

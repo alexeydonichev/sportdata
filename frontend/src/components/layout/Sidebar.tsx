@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   BarChart3, Package, ShoppingCart, Warehouse, RefreshCw, LogOut, Settings, X,
-  PieChart, Bell, FileText, Calculator, Users, RotateCcw, Globe, DollarSign,
+  PieChart, Bell, FileText, Calculator, Users, RotateCcw, Globe, DollarSign, Target,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useEffect, useState } from "react";
@@ -20,6 +20,7 @@ const nav = [
   { name: "Возвраты", href: "/analytics/returns", icon: RotateCcw },
   { name: "Финансы", href: "/analytics/finance", icon: DollarSign },
   { name: "География", href: "/analytics/geography", icon: Globe },
+  { name: "РНП", href: "/rnp", icon: Target },
   { name: "Синхронизация", href: "/sync", icon: RefreshCw },
   { name: "Уведомления", href: "/notifications", icon: Bell },
 ];

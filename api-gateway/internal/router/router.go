@@ -55,6 +55,9 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/analytics/unit-economics", middleware.RoleRequired(4), h.GetUnitEconomics)
 		auth.GET("/analytics/trending", middleware.RoleRequired(4), h.GetTrending)
 
+		// Проекты
+		auth.GET("/projects", middleware.RoleRequired(4), h.GetProjects)
+
 		mgmt := auth.Group("")
 		mgmt.Use(middleware.RoleRequired(2))
 		{
@@ -72,7 +75,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 			// Справочники для форм
 			owners.GET("/roles", h.GetRoles)
 			owners.GET("/departments", h.GetDepartments)
-			
+
 			// Управление пользователями
 			owners.GET("/users", h.GetUsers)
 			owners.POST("/users", h.CreateUser)
@@ -86,6 +89,18 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 			sa.GET("/audit", h.GetAuditLog)
 			sa.GET("/system", h.GetSystemInfo)
 			sa.GET("/users/all", h.GetAllUsersIncludingHidden)
+		}
+
+		// РНП (Рука На Пульсе)
+		rnp := auth.Group("/rnp")
+		rnp.Use(middleware.RoleRequired(4))
+		{
+			rnp.GET("/managers", h.GetManagers)
+			rnp.GET("/templates", h.GetRNPTemplates)
+			rnp.GET("/templates/:id", h.GetRNPItems)
+			rnp.POST("/templates", middleware.RoleRequired(3), h.CreateRNPTemplate)
+			rnp.POST("/templates/:id/items", h.CreateRNPItem)
+			rnp.PATCH("/items/:itemId", h.UpdateRNPItem)
 		}
 	}
 

@@ -26,3 +26,5 @@ pgdata/
 11.11.0
 audit.txt
 *.save
+api-gateway/bin/
+*.patch

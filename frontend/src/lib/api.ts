@@ -5,7 +5,7 @@ export type {
   SyncCredential, SyncHistoryItem, SyncJob, SyncStatusResponse,
   NotificationAlert, NotificationsResponse,
   ProductDetail, MarketplaceStats, TopProduct, UserInfo,
-  ReturnsAnalytics,
+  ReturnsAnalytics, RNPItemsResponse,
 } from "@/types/models";
 
 import type {
@@ -13,7 +13,7 @@ import type {
   SalesResponse, InventoryResponse, SyncCredential,
   SyncHistoryItem, SyncStatusResponse,
   NotificationsResponse, ProductDetail, UserInfo,
-  ReturnsAnalytics,
+  ReturnsAnalytics, RNPItemsResponse,
 } from "@/types/models";
 
 const API_URL = typeof window !== "undefined" ? window.location.origin : "";
@@ -61,7 +61,6 @@ class ApiClient {
     return res.json();
   }
 
-  // Generic REST methods
   async get<T = any>(url: string): Promise<{ data: T }> {
     const data = await this.request<T>(url);
     return { data };
@@ -195,6 +194,17 @@ class ApiClient {
     if (params.period) qs.set("period", params.period);
     if (params.category) qs.set("category", params.category);
     return this.request<ReturnsAnalytics>("/api/v1/analytics/returns?" + qs.toString());
+  }
+
+  rnpTemplates(params: { year?: number; month?: number } = {}) {
+    const qs = new URLSearchParams();
+    if (params.year) qs.set("year", params.year.toString());
+    if (params.month) qs.set("month", params.month.toString());
+    return this.request<any>("/api/v1/rnp/templates?" + qs.toString());
+  }
+
+  rnpItems(templateId: number) {
+    return this.request<RNPItemsResponse>("/api/v1/rnp/templates/" + templateId + "/items");
   }
 
   register(data: { token: string; password: string; name: string }) {

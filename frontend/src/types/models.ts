@@ -388,3 +388,91 @@ export interface ReturnsAnalytics {
     return_amount: number;
   }[];
 }
+
+// --- РНП (Расчёт Нормы Продаж) ---
+
+export interface RNPTemplate {
+  id: number;
+  project_id: number;
+  project_name: string;
+  manager_id: string;
+  manager_name: string;
+  marketplace_id: number;
+  marketplace: string;
+  year: number;
+  month: number;
+  status: string;
+  days_passed: number;
+  days_left: number;
+  days_in_month: number;
+  items_count: number;
+  created_at: string;
+}
+
+export interface RNPTemplatesResponse {
+  year: number;
+  month: number;
+  templates: RNPTemplate[];
+}
+
+export interface RNPItem {
+  id: number;
+  nm_id: number;
+  sku: string;
+  size: string;
+  name: string;
+  category: string;
+  season: string;
+  photo_url: string;
+  
+  // План
+  plan_orders_qty: number;
+  plan_orders_rub: number;
+  plan_price: number;
+  plan_daily_avg: number;
+  
+  // Факт
+  fact_orders_qty: number;
+  fact_orders_rub: number;
+  fact_avg_price: number;
+  fact_daily_avg: number;
+  
+  // Выполнение
+  completion_pct_qty: number;
+  completion_status: "under" | "ok" | "over";
+  
+  // Остатки
+  stock_fbo: number;
+  stock_fbs: number;
+  stock_in_transit: number;
+  stock_1c: number;
+  
+  // Оборачиваемость
+  turnover_mtd: number;
+  turnover_7d: number;
+  
+  // Отзывы
+  reviews_avg_rating: number;
+  reviews_status: string;
+}
+
+export interface RNPTemplateDetail {
+  id: number;
+  year: number;
+  month: number;
+  days_passed: number;
+  days_left: number;
+  days_in_month: number;
+}
+
+export interface RNPItemsResponse {
+  template: RNPTemplateDetail;
+  items: RNPItem[];
+  count: number;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  slug: string;
+}
