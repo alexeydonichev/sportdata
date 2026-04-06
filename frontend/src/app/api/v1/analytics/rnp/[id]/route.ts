@@ -35,7 +35,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
 export async function DELETE(req: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
-    const deleted = await rnpRepo.remove(parseInt(id));
+    const deleted = await rnpRepo.delete(parseInt(id));
     if (!deleted) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }

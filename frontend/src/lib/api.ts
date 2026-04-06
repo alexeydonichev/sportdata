@@ -1,11 +1,12 @@
 export type {
   DashboardData, DashboardChanges, ChartDataPoint,
-  Category, Product, SaleItem, SalesResponse,
+  Category, Product, SalesResponse,
   InventoryItem, InventoryResponse,
-  SyncCredential, SyncHistoryItem, SyncJob, SyncStatusResponse,
+  SyncCredential, SyncHistoryItem,
   NotificationAlert, NotificationsResponse,
   ProductDetail, MarketplaceStats, TopProduct, UserInfo,
-  ReturnsAnalytics, RNPItemsResponse,
+  ReturnsAnalytics, RNPItemsResponse, Manager, ChecklistTemplate,
+  RNPDailyStat, RNPChecklistItem,
 } from "@/types/models";
 
 import type {
@@ -13,7 +14,8 @@ import type {
   SalesResponse, InventoryResponse, SyncCredential,
   SyncHistoryItem, SyncStatusResponse,
   NotificationsResponse, ProductDetail, UserInfo,
-  ReturnsAnalytics, RNPItemsResponse,
+  ReturnsAnalytics, RNPItemsResponse, Manager, ChecklistTemplate,
+  RNPDailyStat, RNPChecklistItem,
 } from "@/types/models";
 
 const API_URL = typeof window !== "undefined" ? window.location.origin : "";
@@ -196,6 +198,15 @@ class ApiClient {
     return this.request<ReturnsAnalytics>("/api/v1/analytics/returns?" + qs.toString());
   }
 
+  // === РНП методы ===
+  rnpManagers() {
+    return this.request<{ managers: Manager[] }>("/api/v1/rnp/managers");
+  }
+
+  rnpChecklistTemplates() {
+    return this.request<{ templates: ChecklistTemplate[] }>("/api/v1/rnp/checklist-templates");
+  }
+
   rnpTemplates(params: { year?: number; month?: number } = {}) {
     const qs = new URLSearchParams();
     if (params.year) qs.set("year", params.year.toString());
@@ -204,7 +215,33 @@ class ApiClient {
   }
 
   rnpItems(templateId: number) {
-    return this.request<RNPItemsResponse>("/api/v1/rnp/templates/" + templateId + "/items");
+    return this.request<RNPItemsResponse>("/api/v1/rnp/templates/" + templateId);
+  }
+
+  rnpUpdateItem(itemId: number, data: { manager_id?: number | null; item_status?: string }) {
+    return this.request<{ message: string }>("/api/v1/rnp/items/" + itemId, {
+      method: "PATCH", body: JSON.stringify(data),
+    });
+  }
+
+  rnpItemDaily(itemId: number) {
+    return this.request<{ stats: RNPDailyStat[] }>("/api/v1/rnp/items/" + itemId + "/daily");
+  }
+
+  rnpItemChecklist(itemId: number) {
+    return this.request<{ checklist: RNPChecklistItem[] }>("/api/v1/rnp/items/" + itemId + "/checklist");
+  }
+
+  rnpInitChecklist(itemId: number) {
+    return this.request<{ message: string }>("/api/v1/rnp/items/" + itemId + "/checklist/init", {
+      method: "POST",
+    });
+  }
+
+  rnpUpdateChecklist(checklistId: number, data: { is_done: boolean; comment?: string }) {
+    return this.request<{ message: string }>("/api/v1/rnp/checklist/" + checklistId, {
+      method: "PATCH", body: JSON.stringify(data),
+    });
   }
 
   register(data: { token: string; password: string; name: string }) {

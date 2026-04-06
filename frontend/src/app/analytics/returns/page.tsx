@@ -89,7 +89,7 @@ export default function ReturnsPage() {
   const exportHeaders = ["Товар", "SKU", "Категория", "Продажи шт", "Возвраты шт", "% возвратов", "Сумма возвратов"];
   const getExportRows = () => {
     if (!data) return [];
-    return data.by_product.map(p => [
+    return data.by_product.map((p: any) => [
       p.name, p.sku, p.category,
       String(p.sales_qty), String(p.return_qty),
       String(p.return_rate), String(p.return_amount),
@@ -164,7 +164,7 @@ export default function ReturnsPage() {
           <div className="rounded-2xl border border-border-subtle bg-surface-1 p-6">
             <h3 className="text-sm font-medium text-text-secondary mb-4">Динамика возвратов по дням</h3>
             <ResponsiveContainer width="100%" height={280}>
-              <AreaChart data={data.daily.map(d => ({ ...d, label: formatDate(d.date) }))} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+              <AreaChart data={data.daily.map((d: any) => ({ ...d, label: formatDate(d.date) }))} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
                 <defs>
                   <linearGradient id="gRetSales" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#6366F1" stopOpacity={0.15} />
@@ -192,8 +192,8 @@ export default function ReturnsPage() {
               <div className="rounded-2xl border border-border-subtle bg-surface-1 p-6">
                 <h3 className="text-sm font-medium text-text-secondary mb-4">По категориям</h3>
                 <div className="space-y-3">
-                  {data.by_category.map((cat) => {
-                    const maxRet = Math.max(...data.by_category.map(c => c.return_qty), 1);
+                  {data.by_category.map((cat: any) => {
+                    const maxRet = Math.max(...data.by_category.map((c: any) => c.return_qty), 1);
                     const pct = (cat.return_qty / maxRet) * 100;
                     return (
                       <div key={cat.category}>
@@ -218,8 +218,8 @@ export default function ReturnsPage() {
               <div className="rounded-2xl border border-border-subtle bg-surface-1 p-6">
                 <h3 className="text-sm font-medium text-text-secondary mb-4">По складам</h3>
                 <div className="space-y-3">
-                  {data.by_warehouse.map((wh) => {
-                    const maxRet = Math.max(...data.by_warehouse.map(w => w.return_qty), 1);
+                  {data.by_warehouse.map((wh: any) => {
+                    const maxRet = Math.max(...data.by_warehouse.map((w: any) => w.return_qty), 1);
                     const pct = (wh.return_qty / maxRet) * 100;
                     return (
                       <div key={wh.warehouse}>

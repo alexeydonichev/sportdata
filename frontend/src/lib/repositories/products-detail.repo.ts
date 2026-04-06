@@ -129,13 +129,12 @@ export async function getProductDetail(productId: number, days: number): Promise
   return {
     product: {
       id: pr.id, name: pr.name, sku: pr.sku, barcode: pr.barcode || "",
-      cost_price: costPrice, price: avgPrice,
+      cost_price: costPrice, retail_price: avgPrice, discount_price: avgPrice,
       category: pr.category || "Без категории",
       category_slug: pr.category_slug || "none",
       created_at: pr.created_at, brand: pr.brand || "YourFit",
-      image_url: null, dimensions: null,
-      weight_g: pr.weight_g || null, nm_id: null,
-      retail_price: 0, discount_price: 0,
+      image_url: undefined, dimensions: undefined,
+      weight_g: pr.weight_g || null, nm_id: undefined,
     },
     metrics: {
       total_revenue: m.total_revenue, total_profit: m.total_profit,

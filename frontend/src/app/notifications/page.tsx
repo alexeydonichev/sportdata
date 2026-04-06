@@ -175,7 +175,7 @@ export default function NotificationsPage() {
       ) : (
         <div className="space-y-3 animate-fade-in">
           {filtered.map((alert: NotificationAlert) => {
-            const config = TYPE_CONFIG[alert.type];
+            const config = TYPE_CONFIG[alert.type as keyof typeof TYPE_CONFIG];
             const Icon = config.icon;
             return (
               <div key={alert.id} className={"rounded-xl border p-4 transition-colors hover:border-border-default " + SEVERITY_STYLES[alert.severity]}>

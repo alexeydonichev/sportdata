@@ -72,11 +72,8 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		owners := auth.Group("")
 		owners.Use(middleware.RoleRequired(1))
 		{
-			// Справочники для форм
 			owners.GET("/roles", h.GetRoles)
 			owners.GET("/departments", h.GetDepartments)
-
-			// Управление пользователями
 			owners.GET("/users", h.GetUsers)
 			owners.POST("/users", h.CreateUser)
 			owners.PATCH("/users/:id", h.UpdateUser)
@@ -95,12 +92,28 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		rnp := auth.Group("/rnp")
 		rnp.Use(middleware.RoleRequired(4))
 		{
+			// Справочники
 			rnp.GET("/managers", h.GetManagers)
+			rnp.GET("/checklist-templates", h.GetChecklistTemplates)
+
+			// Шаблоны РНП
 			rnp.GET("/templates", h.GetRNPTemplates)
-			rnp.GET("/templates/:id", h.GetRNPItems)
 			rnp.POST("/templates", middleware.RoleRequired(3), h.CreateRNPTemplate)
+			rnp.GET("/templates/:id", h.GetRNPItems)
 			rnp.POST("/templates/:id/items", h.CreateRNPItem)
+
+			// Товары в РНП
 			rnp.PATCH("/items/:itemId", h.UpdateRNPItem)
+			rnp.DELETE("/items/:itemId", h.DeleteRNPItem)
+
+			// Дневная статистика
+			rnp.GET("/items/:itemId/daily", h.GetRNPDailyStats)
+			rnp.POST("/items/:itemId/daily", h.SaveRNPDailyStat)
+
+			// Чек-лист товара
+			rnp.GET("/items/:itemId/checklist", h.GetRNPChecklist)
+			rnp.POST("/items/:itemId/checklist/init", h.InitRNPChecklist)
+			rnp.PATCH("/checklist/:checklistId", h.UpdateRNPChecklistItem)
 		}
 	}
 

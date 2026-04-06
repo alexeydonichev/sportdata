@@ -1,7 +1,7 @@
 import pool from "@/lib/db";
 import type { DashboardKPI, DashboardChanges, ChartDataPoint, MarketplaceStats, TopProduct } from "@/types/models";
 
-function pctChange(c: number, p: number): number | null {
+function pctChange(c: number, p: number): number | undefined {
   if (p === 0 && c === 0) return 0;
   if (p === 0) return c > 0 ? 100 : -100;
   return parseFloat((((c - p) / p) * 100).toFixed(1));

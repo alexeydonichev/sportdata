@@ -28,7 +28,7 @@ export default function CategoryFilter({ value, onChange }: Props) {
         }
       >
         <Tag className="h-3 w-3" />
-        Все ({categories.reduce((s, c) => s + c.product_count, 0)})
+        Все ({categories.reduce((s, c) => s + c.products_count, 0)})
       </button>
       {categories.map((c) => (
         <button
@@ -41,7 +41,7 @@ export default function CategoryFilter({ value, onChange }: Props) {
               : "bg-surface-1 text-text-secondary border-border-default hover:border-border-strong hover:text-text-primary")
           }
         >
-          {c.name} ({c.product_count})
+          {c.name} ({c.products_count})
         </button>
       ))}
     </div>
