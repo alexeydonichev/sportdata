@@ -181,7 +181,7 @@ func TestPaginationParams(t *testing.T) {
 		{"custom size", "?limit=50", 1, 50},
 		{"both params", "?page=3&limit=10", 3, 10},
 		{"invalid page", "?page=-1", 1, 20},
-		{"size too large", "?limit=1000", 1, 100},
+		{"size too large", "?limit=1000", 1, 20},
 	}
 
 	for _, tt := range tests {
@@ -197,7 +197,7 @@ func TestPaginationParams(t *testing.T) {
 					}
 				}
 				if l := c.Query("limit"); l != "" {
-					if parsed := parseInt(l); parsed > 0 && parsed <= 100 {
+					if parsed := parseInt(l); parsed > 0 && parsed <= 20 {
 						limit = parsed
 					}
 				}
