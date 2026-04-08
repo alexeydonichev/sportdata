@@ -239,13 +239,13 @@ func (h *Handler) ExportSalesCSV(c *gin.Context) {
 		var qty int
 		var rev, prof, comm, logi float64
 		rows.Scan(&saleDate, &pName, &pSku, &cName, &mName, &qty, &rev, &prof, &comm, &logi)
-		
+
 		// Escape CSV fields
 		pName = csvEscape(pName)
 		pSku = csvEscape(pSku)
 		cName = csvEscape(cName)
 		mName = csvEscape(mName)
-		
+
 		csv.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%d,%.2f,%.2f,%.2f,%.2f\n",
 			saleDate.Format("2006-01-02"), pName, pSku, cName, mName,
 			qty, rev, prof, comm, logi))

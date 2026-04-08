@@ -45,8 +45,8 @@ func (h *Handler) GetUsers(c *gin.Context) {
 		item := gin.H{
 			"id": id, "email": email, "first_name": fn, "last_name": ln,
 			"role": rSlug, "role_name": rName, "role_level": rLevel,
-			"is_active": isActive,
-			"departments": departments,
+			"is_active":          isActive,
+			"departments":        departments,
 			"marketplace_access": marketplaces,
 		}
 		if lastLogin != nil {
@@ -105,13 +105,13 @@ func (h *Handler) getUserMarketplaceAccess(ctx context.Context, userID string) [
 }
 
 type CreateUserRequest struct {
-	Email             string `json:"email" binding:"required,email"`
-	Password          string `json:"password" binding:"required,min=8"`
-	FirstName         string `json:"first_name" binding:"required"`
-	LastName          string `json:"last_name"`
-	RoleSlug          string `json:"role" binding:"required"`
-	DepartmentIDs     []int  `json:"department_ids"`
-	MarketplaceIDs    []int  `json:"marketplace_ids"`
+	Email          string `json:"email" binding:"required,email"`
+	Password       string `json:"password" binding:"required,min=8"`
+	FirstName      string `json:"first_name" binding:"required"`
+	LastName       string `json:"last_name"`
+	RoleSlug       string `json:"role" binding:"required"`
+	DepartmentIDs  []int  `json:"department_ids"`
+	MarketplaceIDs []int  `json:"marketplace_ids"`
 }
 
 func (h *Handler) CreateUser(c *gin.Context) {
@@ -144,7 +144,6 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		FROM roles r WHERE r.slug = $5
 		RETURNING id
 	`, req.Email, string(hash), req.FirstName, req.LastName, req.RoleSlug).Scan(&userID)
-
 
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -185,12 +184,12 @@ func (h *Handler) CreateUser(c *gin.Context) {
 }
 
 type UpdateUserRequest struct {
-	FirstName         *string `json:"first_name"`
-	LastName          *string `json:"last_name"`
-	RoleSlug          *string `json:"role"`
-	IsActive          *bool   `json:"is_active"`
-	DepartmentIDs     []int   `json:"department_ids"`
-	MarketplaceIDs    []int   `json:"marketplace_ids"`
+	FirstName      *string `json:"first_name"`
+	LastName       *string `json:"last_name"`
+	RoleSlug       *string `json:"role"`
+	IsActive       *bool   `json:"is_active"`
+	DepartmentIDs  []int   `json:"department_ids"`
+	MarketplaceIDs []int   `json:"marketplace_ids"`
 }
 
 func (h *Handler) UpdateUser(c *gin.Context) {

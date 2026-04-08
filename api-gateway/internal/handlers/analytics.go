@@ -168,7 +168,7 @@ func (h *Handler) GetPnL(c *gin.Context) {
 			"logistics":          round2(logistics),
 			"operating_expenses": round2(operatingExpenses),
 			"operating_profit":   round2(operatingProfit),
-			"advertising":       0,
+			"advertising":        0,
 			"net_profit":         round2(netProfit),
 		},
 		"margins": gin.H{
@@ -354,10 +354,10 @@ func (h *Handler) GetUnitEconomics(c *gin.Context) {
 			"cost_price": round2(costPrice), "avg_price": round2(avgPrice),
 			"revenue": round2(rev), "profit": round2(prof), "quantity": qty,
 			"commission": round2(comm), "logistics": round2(logi),
-			"profit_per_unit": round2(profitPerUnit),
+			"profit_per_unit":     round2(profitPerUnit),
 			"commission_per_unit": round2(commPerUnit),
-			"logistics_per_unit": round2(logiPerUnit),
-			"margin_pct": round2(marginPct),
+			"logistics_per_unit":  round2(logiPerUnit),
+			"margin_pct":          round2(marginPct),
 		})
 
 		totRev += rev
@@ -378,7 +378,7 @@ func (h *Handler) GetUnitEconomics(c *gin.Context) {
 			"revenue": round2(totRev), "profit": round2(totProf),
 			"commission": round2(totComm), "logistics": round2(totLogi),
 			"cost_of_goods": round2(totCost), "quantity": totQty,
-			"margin_pct": round2(pct(totProf, totRev)),
+			"margin_pct":          round2(pct(totProf, totRev)),
 			"avg_profit_per_unit": round2(div(totProf, float64(totQty))),
 		},
 	})

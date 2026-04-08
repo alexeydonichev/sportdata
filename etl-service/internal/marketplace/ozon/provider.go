@@ -20,7 +20,7 @@ func NewProvider(db *pgxpool.Pool) *Provider {
 	return &Provider{db: db}
 }
 
-func (p *Provider) Name() string           { return "Ozon" }
+func (p *Provider) Name() string            { return "Ozon" }
 func (p *Provider) MarketplaceSlug() string { return "ozon" }
 
 func (p *Provider) SyncSales(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error) {

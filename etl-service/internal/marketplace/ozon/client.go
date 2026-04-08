@@ -100,8 +100,8 @@ type Operation struct {
 }
 
 type OperationItem struct {
-	Name string  `json:"name"`
-	SKU  int64   `json:"sku"`
+	Name string `json:"name"`
+	SKU  int64  `json:"sku"`
 }
 
 type OperationPosting struct {

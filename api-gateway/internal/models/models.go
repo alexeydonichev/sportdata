@@ -57,15 +57,15 @@ type Category struct {
 }
 
 type Product struct {
-	ID        int      `json:"id"`
-	SKU       string   `json:"sku"`
-	Name      string   `json:"name"`
+	ID        int       `json:"id"`
+	SKU       string    `json:"sku"`
+	Name      string    `json:"name"`
 	Category  *Category `json:"category,omitempty"`
-	Brand     string   `json:"brand"`
-	Barcode   string   `json:"barcode,omitempty"`
-	WeightG   *int     `json:"weight_g,omitempty"`
-	CostPrice *float64 `json:"cost_price,omitempty"`
-	IsActive  bool     `json:"is_active"`
+	Brand     string    `json:"brand"`
+	Barcode   string    `json:"barcode,omitempty"`
+	WeightG   *int      `json:"weight_g,omitempty"`
+	CostPrice *float64  `json:"cost_price,omitempty"`
+	IsActive  bool      `json:"is_active"`
 }
 
 type ProductMapping struct {
@@ -166,21 +166,21 @@ type PeriodFilter struct {
 }
 
 type DashboardOverview struct {
-	Period          string  `json:"period"`
-	TotalRevenue    float64 `json:"total_revenue"`
-	TotalProfit     float64 `json:"total_profit"`
-	TotalOrders     int     `json:"total_orders"`
-	TotalQuantity   int     `json:"total_quantity"`
-	TotalReturns    int     `json:"total_returns"`
-	AvgOrderValue   float64 `json:"avg_order_value"`
-	ProfitMargin    float64 `json:"profit_margin_pct"`
-	RevenueChange   float64 `json:"revenue_change_pct"`
-	ProfitChange    float64 `json:"profit_change_pct"`
-	OrdersChange    float64 `json:"orders_change_pct"`
-	ActiveProducts  int     `json:"active_products"`
-	TotalSKU        int     `json:"total_sku"`
-	ByMarketplace   []MarketplaceSummary `json:"by_marketplace"`
-	TopProducts     []ProductSummary     `json:"top_products"`
+	Period         string               `json:"period"`
+	TotalRevenue   float64              `json:"total_revenue"`
+	TotalProfit    float64              `json:"total_profit"`
+	TotalOrders    int                  `json:"total_orders"`
+	TotalQuantity  int                  `json:"total_quantity"`
+	TotalReturns   int                  `json:"total_returns"`
+	AvgOrderValue  float64              `json:"avg_order_value"`
+	ProfitMargin   float64              `json:"profit_margin_pct"`
+	RevenueChange  float64              `json:"revenue_change_pct"`
+	ProfitChange   float64              `json:"profit_change_pct"`
+	OrdersChange   float64              `json:"orders_change_pct"`
+	ActiveProducts int                  `json:"active_products"`
+	TotalSKU       int                  `json:"total_sku"`
+	ByMarketplace  []MarketplaceSummary `json:"by_marketplace"`
+	TopProducts    []ProductSummary     `json:"top_products"`
 }
 
 type MarketplaceSummary struct {
@@ -194,9 +194,9 @@ type MarketplaceSummary struct {
 }
 
 type ProductSummary struct {
-	SKU         string  `json:"sku"`
-	Name        string  `json:"name"`
-	Revenue     float64 `json:"revenue"`
-	Profit      float64 `json:"profit"`
-	Quantity    int     `json:"quantity"`
+	SKU      string  `json:"sku"`
+	Name     string  `json:"name"`
+	Revenue  float64 `json:"revenue"`
+	Profit   float64 `json:"profit"`
+	Quantity int     `json:"quantity"`
 }

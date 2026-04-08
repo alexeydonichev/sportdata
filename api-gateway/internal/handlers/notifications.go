@@ -60,8 +60,8 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 			}
 			alerts = append(alerts, gin.H{
 				"id": strconv.Itoa(alertID), "type": alertType, "severity": severity,
-				"title":   title,
-				"message": fmt.Sprintf("Остаток %d шт, хватит на %d дней (продажи %.1f шт/день)", stock, dos, avgDaily),
+				"title":      title,
+				"message":    fmt.Sprintf("Остаток %d шт, хватит на %d дней (продажи %.1f шт/день)", stock, dos, avgDaily),
 				"product_id": pid, "product_name": name, "sku": sku,
 				"value": dos, "threshold": 7, "created_at": time.Now().Format(time.RFC3339),
 			})

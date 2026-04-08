@@ -1,16 +1,16 @@
 package sync
 
 import (
-"context"
-"fmt"
-"log"
-"sync"
-"time"
+	"context"
+	"fmt"
+	"log"
+	"sync"
+	"time"
 
-"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
 
-"sportdata-etl/internal/crypto"
-"sportdata-etl/internal/models"
+	"sportdata-etl/internal/crypto"
+	"sportdata-etl/internal/models"
 )
 
 const syncCooldown = 5 * time.Minute
@@ -84,7 +84,7 @@ func (e *Engine) runCredential(ctx context.Context, cred *models.Credential) {
 	if cred.LastSyncAt != nil && time.Since(*cred.LastSyncAt) < syncCooldown {
 		remaining := syncCooldown - time.Since(*cred.LastSyncAt)
 		log.Printf("[sync] %s (cred #%d) rate limited, retry in %v",
-cred.MarketplaceSlug, cred.ID, remaining.Round(time.Second))
+			cred.MarketplaceSlug, cred.ID, remaining.Round(time.Second))
 		return
 	}
 
@@ -102,14 +102,14 @@ cred.MarketplaceSlug, cred.ID, remaining.Round(time.Second))
 	}
 
 	log.Printf("[sync] starting %s (cred #%d: %s)...",
-cred.MarketplaceSlug, cred.ID, cred.Name)
+		cred.MarketplaceSlug, cred.ID, cred.Name)
 
 	dateTo := time.Now()
 	dateFrom := dateTo.AddDate(0, 0, -30)
 
 	// Основная синхронизация продаж
 	e.runJob(ctx, cred, "sales", func(ctx context.Context) (int, error) {
-if rp, ok := provider.(ReportProvider); ok {
+		if rp, ok := provider.(ReportProvider); ok {
 			return rp.SyncReport(ctx, cred, apiKey, dateFrom, dateTo)
 		}
 		return provider.SyncSales(ctx, cred, apiKey, dateFrom, dateTo)
@@ -117,22 +117,22 @@ if rp, ok := provider.(ReportProvider); ok {
 
 	// Синхронизация остатков
 	e.runJob(ctx, cred, "stocks", func(ctx context.Context) (int, error) {
-return provider.SyncStocks(ctx, cred, apiKey)
-})
+		return provider.SyncStocks(ctx, cred, apiKey)
+	})
 
 	e.db.Exec(ctx,
-"UPDATE marketplace_credentials SET last_sync_at=NOW() WHERE id=$1",
-cred.ID)
+		"UPDATE marketplace_credentials SET last_sync_at=NOW() WHERE id=$1",
+		cred.ID)
 }
 
 func (e *Engine) runJob(ctx context.Context, cred *models.Credential, jobType string, fn func(ctx context.Context) (int, error)) {
 	now := time.Now()
 	var jobID int64
 	err := e.db.QueryRow(ctx,
-`INSERT INTO sync_jobs (marketplace_id, credential_id, job_type, status, started_at, created_at)
+		`INSERT INTO sync_jobs (marketplace_id, credential_id, job_type, status, started_at, created_at)
 		 VALUES ($1, $2, $3, 'running', $4, $4) RETURNING id`,
-cred.MarketplaceID, cred.ID, jobType, now,
-).Scan(&jobID)
+		cred.MarketplaceID, cred.ID, jobType, now,
+	).Scan(&jobID)
 	if err != nil {
 		log.Printf("[sync] failed to create job: %v", err)
 		return
@@ -146,24 +146,24 @@ cred.MarketplaceID, cred.ID, jobType, now,
 	if err != nil {
 		log.Printf("[sync] job #%d failed: %v", jobID, err)
 		e.db.Exec(ctx,
-`UPDATE sync_jobs SET status='failed', completed_at=$1, error_message=$2, records_processed=$3 WHERE id=$4`,
-completed, err.Error(), records, jobID)
+			`UPDATE sync_jobs SET status='failed', completed_at=$1, error_message=$2, records_processed=$3 WHERE id=$4`,
+			completed, err.Error(), records, jobID)
 		return
 	}
 
 	log.Printf("[sync] job #%d: %d records in %v",
-jobID, records, completed.Sub(now).Round(time.Millisecond))
+		jobID, records, completed.Sub(now).Round(time.Millisecond))
 	e.db.Exec(ctx,
-`UPDATE sync_jobs SET status='completed', completed_at=$1, records_processed=$2 WHERE id=$3`,
-completed, records, jobID)
+		`UPDATE sync_jobs SET status='completed', completed_at=$1, records_processed=$2 WHERE id=$3`,
+		completed, records, jobID)
 }
 
 func (e *Engine) createFailedJob(ctx context.Context, cred *models.Credential, jobType, errMsg string) {
 	now := time.Now()
 	e.db.Exec(ctx,
-`INSERT INTO sync_jobs (marketplace_id, credential_id, job_type, status, started_at, completed_at, error_message, created_at)
+		`INSERT INTO sync_jobs (marketplace_id, credential_id, job_type, status, started_at, completed_at, error_message, created_at)
 		 VALUES ($1, $2, $3, 'failed', $4, $4, $5, $4)`,
-cred.MarketplaceID, cred.ID, jobType, now, errMsg)
+		cred.MarketplaceID, cred.ID, jobType, now, errMsg)
 }
 
 func (e *Engine) loadCredentials(ctx context.Context) ([]models.Credential, error) {
@@ -199,7 +199,7 @@ func (e *Engine) loadCredentialByID(ctx context.Context, id int) (*models.Creden
 		FROM marketplace_credentials mc
 		JOIN marketplaces m ON m.id = mc.marketplace_id
 		WHERE mc.id=$1 AND mc.is_active=true`, id,
-).Scan(&c.ID, &c.MarketplaceID, &c.MarketplaceSlug,
+	).Scan(&c.ID, &c.MarketplaceID, &c.MarketplaceSlug,
 		&c.Name, &c.APIKeyEncrypted, &c.ClientID, &c.IsActive, &c.LastSyncAt)
 	if err != nil {
 		return nil, err

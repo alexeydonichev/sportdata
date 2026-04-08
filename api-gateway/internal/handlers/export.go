@@ -42,7 +42,7 @@ func periodLabel(p string) string {
 		return "90 дней"
 	default:
 		return "30 дней"
-}
+	}
 }
 
 type csvBuffer struct{ buf *[]byte }
