@@ -1,0 +1,23 @@
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - (*github.com/jackc/pgx/v5.Tx).Exec
+      - (*github.com/jackc/pgx/v5.Tx).Rollback
+      - (*github.com/jackc/pgx/v5.Tx).Commit
+      - (*github.com/jackc/pgx/v5/pgxpool.Pool).Exec
+
+issues:
+  exclude-rules:
+    - path: handlers/
+      linters:
+        - errcheck
+      text: "Error return value"
