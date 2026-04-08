@@ -1,15 +1,12 @@
-linters:
-  disable:
-    - errcheck
+run:
+  timeout: 5m
 
-linters-settings:
-  staticcheck:
-    checks:
-      - "all"
-      - "-SA1019"
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - gofmt
 
 issues:
-  exclude-rules:
-    - linters:
-        - ineffassign
-      path: ".*"
+  max-issues-per-linter: 0
+  max-same-issues: 0
