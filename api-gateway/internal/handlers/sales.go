@@ -186,3 +186,79 @@ func (h *Handler) GetInventory(c *gin.Context) {
 		},
 	})
 }
+
+func (h *Handler) ExportSalesCSV(c *gin.Context) {
+	ctx := context.Background()
+	period := c.DefaultQuery("period", "30d")
+	categorySlug := c.Query("category")
+	marketplaceSlug := c.Query("marketplace")
+
+	dateFrom, dateTo := parsePeriod(period)
+
+	conditions := []string{"s.sale_date >= $1", "s.sale_date <= $2"}
+	args := []any{dateFrom, dateTo}
+	argN := 3
+
+	if categorySlug != "" && categorySlug != "all" {
+		conditions = append(conditions, fmt.Sprintf("c.slug = $%d", argN))
+		args = append(args, categorySlug)
+		argN++
+	}
+	if marketplaceSlug != "" && marketplaceSlug != "all" {
+		conditions = append(conditions, fmt.Sprintf("m.slug = $%d", argN))
+		args = append(args, marketplaceSlug)
+		argN++
+	}
+
+	where := "WHERE " + strings.Join(conditions, " AND ")
+
+	q := fmt.Sprintf(`
+		SELECT s.sale_date, COALESCE(p.name,''), COALESCE(p.sku,''),
+			COALESCE(c.name,''), COALESCE(m.name,''), s.quantity, 
+			s.revenue, s.net_profit, COALESCE(s.commission,0), COALESCE(s.logistics_cost,0)
+		FROM sales s
+		LEFT JOIN products p ON p.id = s.product_id
+		LEFT JOIN categories c ON c.id = p.category_id
+		LEFT JOIN marketplaces m ON m.id = s.marketplace_id
+		%s ORDER BY s.sale_date DESC`, where)
+
+	rows, err := h.db.Query(ctx, q, args...)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "db error"})
+		return
+	}
+	defer rows.Close()
+
+	var csv strings.Builder
+	csv.WriteString("\xEF\xBB\xBF") // BOM for Excel
+	csv.WriteString("Дата,Товар,SKU,Категория,Маркетплейс,Кол-во,Выручка,Прибыль,Комиссия,Логистика\n")
+
+	for rows.Next() {
+		var saleDate time.Time
+		var pName, pSku, cName, mName string
+		var qty int
+		var rev, prof, comm, logi float64
+		rows.Scan(&saleDate, &pName, &pSku, &cName, &mName, &qty, &rev, &prof, &comm, &logi)
+		
+		// Escape CSV fields
+		pName = csvEscape(pName)
+		pSku = csvEscape(pSku)
+		cName = csvEscape(cName)
+		mName = csvEscape(mName)
+		
+		csv.WriteString(fmt.Sprintf("%s,%s,%s,%s,%s,%d,%.2f,%.2f,%.2f,%.2f\n",
+			saleDate.Format("2006-01-02"), pName, pSku, cName, mName,
+			qty, rev, prof, comm, logi))
+	}
+
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=sales-export.csv")
+	c.String(200, csv.String())
+}
+
+func csvEscape(s string) string {
+	if strings.ContainsAny(s, ",\"\n") {
+		return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\""
+	}
+	return s
+}

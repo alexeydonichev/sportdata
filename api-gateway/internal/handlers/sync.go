@@ -281,7 +281,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 	etlSecret := os.Getenv("ETL_SECRET")
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"marketplace":   req.Marketplace,
+		"marketplace":   c.Param("marketplace"),
 		"credential_id": req.CredentialID,
 	})
 
@@ -310,7 +310,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 
 	userID, _ := c.Get("user_id")
 	h.auditLog(context.Background(), userID, "sync_triggered", "sync", "0",
-		fmt.Sprintf(`{"marketplace":"%s","credential_id":%d}`, req.Marketplace, req.CredentialID), c.ClientIP())
+		fmt.Sprintf(`{"marketplace":"%s","credential_id":%d}`, c.Param("marketplace"), req.CredentialID), c.ClientIP())
 
 	var result map[string]interface{}
 	json.Unmarshal(respBody, &result)

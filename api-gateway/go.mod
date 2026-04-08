@@ -1,6 +1,6 @@
 module sportdata-api
 
-go 1.24.0
+go 1.21.0
 
 toolchain go1.24.13
 

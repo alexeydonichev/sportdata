@@ -17,6 +17,7 @@ export default function SalesPage() {
   const [category, setCategory] = useState("all");
   const [marketplace, setMarketplace] = useState("all");
   const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => { setPage(1); }, [period, category, marketplace]);
 
@@ -24,11 +25,39 @@ export default function SalesPage() {
     () => api.sales({ period, category, marketplace, page }), [period, category, marketplace, page]
   );
 
-  function handleExport() {
-    const qs = new URLSearchParams({ period });
-    if (category && category !== "all") qs.set("category", category);
-    if (marketplace && marketplace !== "all") qs.set("marketplace", marketplace);
-    window.open("/api/v1/sales/export?" + qs.toString(), "_blank");
+  async function handleExport() {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const qs = new URLSearchParams({ period });
+      if (category && category !== "all") qs.set("category", category);
+      if (marketplace && marketplace !== "all") qs.set("marketplace", marketplace);
+      
+      const token = localStorage.getItem("yf_token");
+      const response = await fetch("/api/v1/sales/export?" + qs.toString(), {
+        headers: token ? { Authorization: "Bearer " + token } : {},
+        credentials: "include"
+      });
+      
+      if (!response.ok) {
+        throw new Error("Ошибка экспорта");
+      }
+      
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sales-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Export error:", e);
+      alert("Ошибка при экспорте");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -39,9 +68,10 @@ export default function SalesPage() {
           <p className="text-sm text-text-tertiary mt-0.5">{data ? data.total + " записей" : "Загрузка..."}</p>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium bg-surface-1 border border-border-default text-text-primary hover:bg-surface-2 transition-colors">
-            <Download className="h-3.5 w-3.5" />Экспорт CSV
+          <button onClick={handleExport} disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium bg-surface-1 border border-border-default text-text-primary hover:bg-surface-2 disabled:opacity-50 transition-colors">
+            <Download className={"h-3.5 w-3.5 " + (exporting ? "animate-pulse" : "")} />
+            {exporting ? "Экспорт..." : "Экспорт CSV"}
           </button>
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>

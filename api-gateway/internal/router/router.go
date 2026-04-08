@@ -46,6 +46,10 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/categories", middleware.RoleRequired(4), h.GetCategories)
 		auth.GET("/marketplaces", middleware.RoleRequired(4), h.GetMarketplaces)
 		auth.GET("/sales", middleware.RoleRequired(4), h.GetSales)
+		auth.GET("/sales/export", middleware.RoleRequired(4), h.ExportSalesCSV)
+		auth.GET("/export/sales", middleware.RoleRequired(4), h.ExportSales)
+		auth.GET("/export/products", middleware.RoleRequired(4), h.ExportProducts)
+		auth.GET("/export/analytics", middleware.RoleRequired(4), h.ExportAnalytics)
 		auth.GET("/inventory", middleware.RoleRequired(4), h.GetInventory)
 		auth.GET("/notifications", middleware.RoleRequired(4), h.GetNotifications)
 		auth.GET("/profile", middleware.RoleRequired(4), h.GetProfile)
@@ -66,7 +70,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 			mgmt.POST("/sync/credentials", h.SaveSyncCredential)
 			mgmt.DELETE("/sync/credentials", h.DeleteSyncCredential)
 			mgmt.GET("/sync/history", h.GetSyncHistory)
-			mgmt.POST("/sync/trigger", h.TriggerSync)
+			mgmt.POST("/sync/trigger/:marketplace", h.TriggerSync)
 		}
 
 		owners := auth.Group("")

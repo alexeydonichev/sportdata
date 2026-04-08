@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
+  poweredByHeader: false,
+  compress: true,
+  
   images: {
     remotePatterns: [
       {
@@ -13,6 +17,10 @@ const nextConfig = {
         pathname: '/**',
       },
     ],
+  },
+
+  experimental: {
+    serverMinification: true,
   },
 };
 

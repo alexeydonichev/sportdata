@@ -108,7 +108,7 @@ class ApiClient {
     return this.request<ChartDataPoint[]>("/api/v1/dashboard/chart?" + qs.toString());
   }
 
-  categories() { return this.request<Category[]>("/api/v1/categories"); }
+  categories() { return this.request<Category[]>("/api/v1/products/categories"); }
 
   products(params: { category?: string; marketplace?: string; search?: string; sort?: string; order?: string } = {}) {
     const qs = new URLSearchParams();
@@ -247,6 +247,34 @@ class ApiClient {
   register(data: { token: string; password: string; name: string }) {
     return this.request<{ token: string; user: UserInfo }>("/api/v1/auth/register", {
       method: "POST", body: JSON.stringify(data),
+    });
+  }
+
+  // РНП - добавление товара вручную
+  rnpAddItem(templateId: number, data: {
+    name: string;
+    sku?: string;
+    plan_orders_qty?: number;
+    plan_orders_rub?: number;
+    season?: string;
+  }) {
+    return this.request<{ item: any; message: string }>("/api/v1/rnp/templates/" + templateId + "/items", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  // РНП - загрузка товаров из маркетплейса
+  rnpLoadFromMarketplace(templateId: number) {
+    return this.request<{ items: any[]; message: string }>("/api/v1/rnp/templates/" + templateId + "/load-products", {
+      method: "POST",
+    });
+  }
+
+  // РНП - удаление товара
+  rnpDeleteItem(itemId: number) {
+    return this.request<{ message: string }>("/api/v1/rnp/items/" + itemId, {
+      method: "DELETE",
     });
   }
 }
