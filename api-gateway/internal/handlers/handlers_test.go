@@ -178,7 +178,7 @@ func TestPaginationParams(t *testing.T) {
 	}{
 		{"defaults", "", 1, 20},
 		{"custom page", "?page=5", 5, 20},
-		{"custom size", "?limit=50", 1, 50},
+		{"custom size", "?limit=15", 1, 15},
 		{"both params", "?page=3&limit=10", 3, 10},
 		{"invalid page", "?page=-1", 1, 20},
 		{"size too large", "?limit=1000", 1, 20},
