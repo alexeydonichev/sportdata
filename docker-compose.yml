@@ -8,16 +8,17 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-sportdata_admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sportdata_admin} -d ${POSTGRES_DB:-sportdata}"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
     networks:
       - sportdata-net
     deploy:
@@ -31,14 +32,14 @@ services:
     image: redis:7-alpine
     container_name: sportdata-redis
     restart: unless-stopped
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
       timeout: 5s
       retries: 5
     networks:
@@ -58,7 +59,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
-      REDIS_URL: redis:${REDIS_PORT:-6379}
+      REDIS_URL: redis:6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       PASETO_SECRET_KEY: ${PASETO_SECRET_KEY}
       JWT_SECRET: ${PASETO_SECRET_KEY}
@@ -66,14 +67,15 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ETL_SECRET: ${ETL_SERVICE_SECRET}
       ETL_SERVICE_URL: http://etl-worker:8081
+      API_GATEWAY_URL: http://api-gateway:8080
       GIN_MODE: release
-      PORT: "${API_PORT:-8080}"
+      PORT: "8080"
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
       SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD}
       SUPERADMIN_TOTP_SECRET: ${SUPERADMIN_TOTP_SECRET}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
     ports:
-      - "${API_PORT:-8080}:${API_PORT:-8080}"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -96,7 +98,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
-      REDIS_URL: redis:${REDIS_PORT:-6379}
+      REDIS_URL: redis:6379
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ETL_SECRET: ${ETL_SERVICE_SECRET}
       ETL_LISTEN: ":8081"
@@ -105,6 +107,8 @@ services:
       - "8081"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - sportdata-net
@@ -128,6 +132,7 @@ services:
       DB_PORT: 5432
       DB_NAME: ${POSTGRES_DB:-sportdata}
       ETL_SERVICE_URL: http://etl-worker:8081
+      API_GATEWAY_URL: http://api-gateway:8080
       ETL_SECRET: ${ETL_SERVICE_SECRET}
       DB_USER: ${POSTGRES_USER:-sportdata_admin}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
@@ -136,10 +141,10 @@ services:
       CREDENTIALS_MASTER_KEY: ${CREDENTIALS_MASTER_KEY:-${ENCRYPTION_KEY}}
       CRON_SECRET: ${CRON_SECRET}
       NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-SportData}
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      NEXT_PUBLIC_API_URL: https://stridepax.tech
+      CORS_ORIGINS: https://stridepax.tech
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -152,10 +157,45 @@ services:
         reservations:
           memory: 128M
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: sportdata-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - sportdata-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: sportdata-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-SportData2024!}
+      GF_SERVER_ROOT_URL: https://stridepax.tech/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - sportdata-net
+
 volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  grafana_data:
+    driver: local
+  prometheus_data:
     driver: local
 
 networks:

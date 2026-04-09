@@ -5,7 +5,7 @@ import Spinner from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { useApiQuery } from "@/hooks/useApiQuery";
 import type { SyncCredential, SyncHistoryItem } from "@/types/models";
-import { formatDate } from "@/lib/utils";
+import { formatDate, formatDateTime } from "@/lib/utils";
 import {
   RefreshCw, Link2, Unlink, Plus, Eye, EyeOff,
   CheckCircle, XCircle, Clock, Loader2, AlertTriangle,
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 const MP_META: Record<string, { color: string; icon: string }> = {
+  wildberries: { color: "#A855F6", icon: "WB" },
   wb: { color: "#A855F6", icon: "WB" },
   ozon: { color: "#2563EB", icon: "OZ" },
   yandex_market: { color: "#FC3F1D", icon: "YM" },
@@ -91,9 +92,17 @@ export default function SyncPage() {
     catch (e: unknown) { setError(e instanceof Error ? e.message : "Ошибка"); }
   }
 
-  function fmtDur(sec: number | null) {
-    if (!sec) return "-";
-    return sec < 60 ? sec + " сек" : Math.floor(sec / 60) + " мин " + (sec % 60) + " сек";
+  function fmtDur(sec: number | null, startedAt?: string | null, completedAt?: string | null) {
+    if (!sec && startedAt && completedAt) {
+      const start = new Date(startedAt).getTime();
+      const end = new Date(completedAt).getTime();
+      sec = Math.floor((end - start) / 1000);
+    }
+    if (!sec || sec <= 0) return "-";
+    if (sec < 60) return sec + " сек";
+    const mins = Math.floor(sec / 60);
+    const secs = sec % 60;
+    return mins + " мин" + (secs > 0 ? " " + secs + " сек" : "");
   }
 
   if (loading) return <AppLayout><Spinner /></AppLayout>;
@@ -255,7 +264,7 @@ export default function SyncPage() {
                   const ss = STATUS_STYLES[job.status] || STATUS_STYLES.pending;
                   const StatusIcon = ss.icon;
                   const isExp = expandedJob === job.id;
-                  const meta = MP_META[job.marketplace] || { color: "#666", icon: "??" };
+                  console.log("DEBUG job:", job.id, job.marketplace); const meta = MP_META[job.marketplace] || { color: "#666", icon: "??" };
                   return (
                     <div key={job.id}>
                       <div className="flex items-center justify-between px-5 py-3.5 hover:bg-surface-2/50 transition-colors cursor-pointer"
@@ -281,9 +290,9 @@ export default function SyncPage() {
                       {isExp && (
                         <div className="px-5 pb-4 pt-0">
                           <div className="rounded-lg bg-surface-2 p-4 grid grid-cols-4 gap-4 text-sm">
-                            <div><p className="text-xs text-text-tertiary mb-1">Начало</p><p className="font-medium">{job.started_at ? formatDate(job.started_at) : "-"}</p></div>
-                            <div><p className="text-xs text-text-tertiary mb-1">Завершение</p><p className="font-medium">{job.completed_at ? formatDate(job.completed_at) : "-"}</p></div>
-                            <div><p className="text-xs text-text-tertiary mb-1">Длительность</p><p className="font-medium">{fmtDur(job.duration_sec)}</p></div>
+                            <div><p className="text-xs text-text-tertiary mb-1">Начало</p><p className="font-medium">{job.started_at ? formatDateTime(job.started_at) : "-"}</p></div>
+                            <div><p className="text-xs text-text-tertiary mb-1">Завершение</p><p className="font-medium">{job.completed_at ? formatDateTime(job.completed_at) : "-"}</p></div>
+                            <div><p className="text-xs text-text-tertiary mb-1">Длительность</p><p className="font-medium">{fmtDur(job.duration_sec, job.started_at, job.completed_at)}</p></div>
                             <div><p className="text-xs text-text-tertiary mb-1">Обработано</p><p className="font-medium tabular-nums">{job.records_processed} записей</p></div>
                             {job.error_message && (
                               <div className="col-span-4">

@@ -11,6 +11,7 @@ import {
 
 interface Role { id: number; slug: string; name: string; level: number; }
 interface Department { id: number; name: string; slug: string; }
+interface Marketplace { id: number; name: string; slug: string; is_active?: boolean; }
 interface MarketplaceAccess { id: number; name: string; slug: string; }
 interface User {
   id: string; email: string; first_name: string; last_name: string;
@@ -29,6 +30,7 @@ export default function TeamPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [marketplaces, setMarketplaces] = useState<Marketplace[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterRole, setFilterRole] = useState("");
@@ -50,12 +52,16 @@ export default function TeamPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [usersRes, rolesRes, deptsRes] = await Promise.all([
-        api.get("/api/v1/users"), api.get("/api/v1/roles"), api.get("/api/v1/departments"),
+      const [usersRes, rolesRes, deptsRes, mpRes] = await Promise.all([
+        api.get("/api/v1/users"),
+        api.get("/api/v1/roles"),
+        api.get("/api/v1/departments"),
+        api.get("/api/v1/marketplaces"),
       ]);
       setUsers(usersRes.data.data || usersRes.data.users || []);
       setRoles(rolesRes.data.data || rolesRes.data.roles || []);
       setDepartments(deptsRes.data.data || deptsRes.data.departments || []);
+      setMarketplaces(mpRes.data.data || mpRes.data.marketplaces || []);
     } catch (e) { console.error(e); } finally { setLoading(false); }
   }, []);
 
@@ -135,8 +141,6 @@ export default function TeamPage() {
     return false;
   };
 
-  const mpSlugs = ['wildberries', 'ozon', 'yandex_market', 'avito', 'detmir'];
-  const marketplaces = departments.filter(d => mpSlugs.includes(d.slug));
 
   return (
     <AppLayout>
