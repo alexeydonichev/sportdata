@@ -16,13 +16,13 @@ import (
 // ============================================
 
 func (h *Handler) GetUsers(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	rows, err := h.db.Query(ctx, `
 		SELECT u.id, u.email, u.first_name, u.last_name, r.slug, r.name, r.level, u.is_active, u.last_login_at
 		FROM users u
 		JOIN roles r ON r.id = u.role_id
-		WHERE u.is_hidden = false
+		WHERE u.is_hidden = false AND u.deleted_at IS NULL
 		ORDER BY r.level, u.last_name
 	`)
 	if err != nil {
@@ -37,7 +37,9 @@ func (h *Handler) GetUsers(c *gin.Context) {
 		var rLevel int
 		var isActive bool
 		var lastLogin *time.Time
-		rows.Scan(&id, &email, &fn, &ln, &rSlug, &rName, &rLevel, &isActive, &lastLogin)
+		if err := rows.Scan(&id, &email, &fn, &ln, &rSlug, &rName, &rLevel, &isActive, &lastLogin); err != nil {
+			continue
+		}
 
 		departments := h.getUserDepartments(ctx, id)
 		marketplaces := h.getUserMarketplaceAccess(ctx, id)
@@ -75,7 +77,9 @@ func (h *Handler) getUserDepartments(ctx context.Context, userID string) []gin.H
 	for rows.Next() {
 		var id int
 		var slug, name string
-		rows.Scan(&id, &slug, &name)
+		if err := rows.Scan(&id, &slug, &name); err != nil {
+			continue
+		}
 		result = append(result, gin.H{"id": id, "slug": slug, "name": name})
 	}
 	return result
@@ -98,7 +102,9 @@ func (h *Handler) getUserMarketplaceAccess(ctx context.Context, userID string) [
 	for rows.Next() {
 		var id int
 		var slug, name string
-		rows.Scan(&id, &slug, &name)
+		if err := rows.Scan(&id, &slug, &name); err != nil {
+			continue
+		}
 		result = append(result, gin.H{"id": id, "slug": slug, "name": name})
 	}
 	return result
@@ -127,7 +133,7 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 
 	tx, err := h.db.Begin(ctx)
@@ -196,18 +202,18 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 	userID := c.Param("id")
 	var req UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Printf("CreateUser validation error: %v", err)
+		log.Printf("UpdateUser validation error: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "неверный формат: " + err.Error()})
 		return
 	}
 
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	var targetRoleSlug string
 	err := h.db.QueryRow(ctx, `
 		SELECT r.slug FROM users u
 		JOIN roles r ON r.id = u.role_id
-		WHERE u.id = $1
+		WHERE u.id = $1 AND u.deleted_at IS NULL
 	`, userID).Scan(&targetRoleSlug)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
@@ -274,13 +280,13 @@ func (h *Handler) UpdateUser(c *gin.Context) {
 
 func (h *Handler) DeleteUser(c *gin.Context) {
 	userID := c.Param("id")
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	var roleSlug string
 	err := h.db.QueryRow(ctx, `
 		SELECT r.slug FROM users u
 		JOIN roles r ON r.id = u.role_id
-		WHERE u.id = $1
+		WHERE u.id = $1 AND u.deleted_at IS NULL
 	`, userID).Scan(&roleSlug)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
@@ -292,7 +298,11 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	h.db.Exec(ctx, "DELETE FROM users WHERE id = $1", userID)
+	_, err = h.db.Exec(ctx, "UPDATE users SET deleted_at = NOW(), is_active = false WHERE id = $1", userID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "ошибка БД"})
+		return
+	}
 
 	callerID, _ := c.Get("user_id")
 	h.db.Exec(ctx, `
@@ -308,36 +318,48 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 // ============================================
 
 func (h *Handler) GetRoles(c *gin.Context) {
-	ctx := context.Background()
-	rows, _ := h.db.Query(ctx, `
+	ctx := c.Request.Context()
+	rows, err := h.db.Query(ctx, `
 		SELECT id, slug, name, level FROM roles
 		WHERE is_hidden = false
 		ORDER BY level
 	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "ошибка БД"})
+		return
+	}
 	defer rows.Close()
 
 	var result []gin.H
 	for rows.Next() {
 		var id, level int
 		var slug, name string
-		rows.Scan(&id, &slug, &name, &level)
+		if err := rows.Scan(&id, &slug, &name, &level); err != nil {
+			continue
+		}
 		result = append(result, gin.H{"id": id, "slug": slug, "name": name, "level": level})
 	}
 	c.JSON(200, gin.H{"data": result})
 }
 
 func (h *Handler) GetDepartments(c *gin.Context) {
-	ctx := context.Background()
-	rows, _ := h.db.Query(ctx, `
+	ctx := c.Request.Context()
+	rows, err := h.db.Query(ctx, `
 		SELECT id, slug, name FROM departments ORDER BY name
 	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "ошибка БД"})
+		return
+	}
 	defer rows.Close()
 
 	var result []gin.H
 	for rows.Next() {
 		var id int
 		var slug, name string
-		rows.Scan(&id, &slug, &name)
+		if err := rows.Scan(&id, &slug, &name); err != nil {
+			continue
+		}
 		result = append(result, gin.H{"id": id, "slug": slug, "name": name})
 	}
 	c.JSON(200, gin.H{"data": result})
@@ -348,13 +370,18 @@ func (h *Handler) GetDepartments(c *gin.Context) {
 // ============================================
 
 func (h *Handler) GetAllUsersIncludingHidden(c *gin.Context) {
-	ctx := context.Background()
-	rows, _ := h.db.Query(ctx, `
+	ctx := c.Request.Context()
+	rows, err := h.db.Query(ctx, `
 		SELECT u.id, u.email, u.first_name, u.last_name, r.slug, u.is_hidden, u.is_active, u.last_login_at
 		FROM users u
 		JOIN roles r ON r.id = u.role_id
+		WHERE u.deleted_at IS NULL
 		ORDER BY r.level, u.last_name
 	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "ошибка БД"})
+		return
+	}
 	defer rows.Close()
 
 	var result []gin.H
@@ -362,7 +389,9 @@ func (h *Handler) GetAllUsersIncludingHidden(c *gin.Context) {
 		var id, email, fn, ln, rSlug string
 		var isHidden, isActive bool
 		var lastLogin *time.Time
-		rows.Scan(&id, &email, &fn, &ln, &rSlug, &isHidden, &isActive, &lastLogin)
+		if err := rows.Scan(&id, &email, &fn, &ln, &rSlug, &isHidden, &isActive, &lastLogin); err != nil {
+			continue
+		}
 		item := gin.H{
 			"id": id, "email": email, "first_name": fn, "last_name": ln,
 			"role": rSlug, "is_hidden": isHidden, "is_active": isActive,
@@ -376,14 +405,18 @@ func (h *Handler) GetAllUsersIncludingHidden(c *gin.Context) {
 }
 
 func (h *Handler) GetAuditLog(c *gin.Context) {
-	ctx := context.Background()
-	rows, _ := h.db.Query(ctx, `
+	ctx := c.Request.Context()
+	rows, err := h.db.Query(ctx, `
 		SELECT a.id, u.email, a.action, a.entity_type, a.entity_id, a.ip_address::text, a.created_at
 		FROM audit_log a
 		LEFT JOIN users u ON u.id = a.user_id
 		ORDER BY a.created_at DESC
 		LIMIT 100
 	`)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "ошибка БД"})
+		return
+	}
 	defer rows.Close()
 
 	var result []gin.H
@@ -391,7 +424,9 @@ func (h *Handler) GetAuditLog(c *gin.Context) {
 		var id int64
 		var email, action, entityType, entityID, ipAddr *string
 		var createdAt time.Time
-		rows.Scan(&id, &email, &action, &entityType, &entityID, &ipAddr, &createdAt)
+		if err := rows.Scan(&id, &email, &action, &entityType, &entityID, &ipAddr, &createdAt); err != nil {
+			continue
+		}
 		item := gin.H{"id": id, "created_at": createdAt}
 		if email != nil {
 			item["user_email"] = *email
@@ -414,7 +449,7 @@ func (h *Handler) GetAuditLog(c *gin.Context) {
 }
 
 func (h *Handler) GetSystemInfo(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	var dbSize string
 	h.db.QueryRow(ctx, "SELECT pg_size_pretty(pg_database_size(current_database()))").Scan(&dbSize)
@@ -423,7 +458,7 @@ func (h *Handler) GetSystemInfo(c *gin.Context) {
 	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'").Scan(&tableCount)
 
 	var userCount int
-	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM users").Scan(&userCount)
+	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&userCount)
 
 	var productCount int
 	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM products").Scan(&productCount)

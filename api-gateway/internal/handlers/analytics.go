@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -9,7 +8,7 @@ import (
 )
 
 func (h *Handler) GetPnL(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "30d")
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
@@ -24,7 +23,6 @@ func (h *Handler) GetPnL(c *gin.Context) {
 	whereClause, args := buildSalesWhere(dateFrom, dateTo, categorySlug, marketplaceSlug)
 	prevWhere, prevArgs := buildSalesWherePrev(prevFrom, prevTo, categorySlug, marketplaceSlug)
 
-	// Current period totals
 	var revenue, costOfGoods, commission, logistics, profit float64
 	var quantity int
 	q := fmt.Sprintf(`
@@ -37,7 +35,6 @@ func (h *Handler) GetPnL(c *gin.Context) {
 		%s %s`, joinClause, whereClause)
 	h.db.QueryRow(ctx, q, args...).Scan(&revenue, &costOfGoods, &commission, &logistics, &profit, &quantity)
 
-	// Returns (negative quantity sales)
 	var returnsAmount float64
 	var unitsReturned int
 	rq := fmt.Sprintf(`
@@ -45,14 +42,12 @@ func (h *Handler) GetPnL(c *gin.Context) {
 		%s %s AND s.quantity < 0`, joinClause, whereClause)
 	h.db.QueryRow(ctx, rq, args...).Scan(&returnsAmount, &unitsReturned)
 
-	// Active SKUs
 	var activeSkus int
 	sq := fmt.Sprintf(`
 		SELECT COUNT(DISTINCT s.product_id)
 		%s %s AND s.quantity > 0`, joinClause, whereClause)
 	h.db.QueryRow(ctx, sq, args...).Scan(&activeSkus)
 
-	// Previous period
 	var prevRevenue, prevProfit, prevCogs, prevCommission, prevLogistics float64
 	var prevQuantity int
 	pq := fmt.Sprintf(`
@@ -63,7 +58,6 @@ func (h *Handler) GetPnL(c *gin.Context) {
 		%s %s`, joinClause, prevWhere)
 	h.db.QueryRow(ctx, pq, prevArgs...).Scan(&prevRevenue, &prevProfit, &prevCogs, &prevCommission, &prevLogistics, &prevQuantity)
 
-	// Computed PnL fields
 	grossRevenue := revenue
 	netRevenue := revenue - returnsAmount
 	grossProfit := netRevenue - costOfGoods
@@ -79,12 +73,10 @@ func (h *Handler) GetPnL(c *gin.Context) {
 	avgCheck := div(grossRevenue, float64(quantity))
 	avgProfitPerUnit := div(netProfit, float64(quantity))
 
-	// Previous period computed
 	prevNetRevenue := prevRevenue
 	prevGrossProfit := prevNetRevenue - prevCogs
 	prevOperatingProfit := prevGrossProfit - prevCommission - prevLogistics
 
-	// By category with full breakdown
 	catQ := fmt.Sprintf(`
 		SELECT COALESCE(c.name, 'Без категории'),
 			COALESCE(c.slug, ''),
@@ -96,25 +88,22 @@ func (h *Handler) GetPnL(c *gin.Context) {
 			COALESCE(SUM(s.quantity * COALESCE(p.cost_price,0)),0)
 		%s %s
 		GROUP BY c.name, c.slug ORDER BY SUM(s.revenue) DESC`, joinClause, whereClause)
-	catRows, _ := h.db.Query(ctx, catQ, args...)
+	catRows, err := h.db.Query(ctx, catQ, args...)
 	var byCategory []gin.H
-	if catRows != nil {
+	if err == nil {
 		defer catRows.Close()
 		for catRows.Next() {
 			var cn, cs string
 			var r, p, comm, logi, cogs float64
 			var qty int
-			catRows.Scan(&cn, &cs, &r, &p, &qty, &comm, &logi, &cogs)
+			if err := catRows.Scan(&cn, &cs, &r, &p, &qty, &comm, &logi, &cogs); err != nil {
+				continue
+			}
 			byCategory = append(byCategory, gin.H{
-				"category":   cn,
-				"slug":       cs,
-				"revenue":    round2(r),
-				"profit":     round2(p),
-				"units":      qty,
-				"commission": round2(comm),
-				"logistics":  round2(logi),
-				"cogs":       round2(cogs),
-				"margin_pct": round2(pct(p, r)),
+				"category": cn, "slug": cs,
+				"revenue": round2(r), "profit": round2(p), "units": qty,
+				"commission": round2(comm), "logistics": round2(logi),
+				"cogs": round2(cogs), "margin_pct": round2(pct(p, r)),
 			})
 		}
 	}
@@ -122,7 +111,6 @@ func (h *Handler) GetPnL(c *gin.Context) {
 		byCategory = []gin.H{}
 	}
 
-	// Daily chart
 	chartQ := fmt.Sprintf(`
 		SELECT s.sale_date,
 			COALESCE(SUM(s.revenue),0),
@@ -132,21 +120,20 @@ func (h *Handler) GetPnL(c *gin.Context) {
 			COALESCE(SUM(CASE WHEN s.quantity < 0 THEN ABS(s.revenue) ELSE 0 END),0)
 		%s %s
 		GROUP BY s.sale_date ORDER BY s.sale_date`, joinClause, whereClause)
-	chartRows, _ := h.db.Query(ctx, chartQ, args...)
+	chartRows, err := h.db.Query(ctx, chartQ, args...)
 	var daily []gin.H
-	if chartRows != nil {
+	if err == nil {
 		defer chartRows.Close()
 		for chartRows.Next() {
 			var d time.Time
 			var r, p, co, lo, ret float64
-			chartRows.Scan(&d, &r, &p, &co, &lo, &ret)
+			if err := chartRows.Scan(&d, &r, &p, &co, &lo, &ret); err != nil {
+				continue
+			}
 			daily = append(daily, gin.H{
-				"date":       d.Format("2006-01-02"),
-				"revenue":    round2(r),
-				"profit":     round2(p),
-				"commission": round2(co),
-				"logistics":  round2(lo),
-				"returns":    round2(ret),
+				"date": d.Format("2006-01-02"), "revenue": round2(r),
+				"profit": round2(p), "commission": round2(co),
+				"logistics": round2(lo), "returns": round2(ret),
 			})
 		}
 	}
@@ -155,46 +142,35 @@ func (h *Handler) GetPnL(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"period":    period,
-		"date_from": dateFrom,
-		"date_to":   dateTo,
+		"period": period, "date_from": dateFrom, "date_to": dateTo,
 		"pnl": gin.H{
-			"gross_revenue":      round2(grossRevenue),
-			"returns_amount":     round2(returnsAmount),
-			"net_revenue":        round2(netRevenue),
-			"cogs":               round2(costOfGoods),
-			"gross_profit":       round2(grossProfit),
-			"commission":         round2(commission),
-			"logistics":          round2(logistics),
-			"operating_expenses": round2(operatingExpenses),
-			"operating_profit":   round2(operatingProfit),
-			"advertising":        0,
-			"net_profit":         round2(netProfit),
+			"gross_revenue": round2(grossRevenue), "returns_amount": round2(returnsAmount),
+			"net_revenue": round2(netRevenue), "cogs": round2(costOfGoods),
+			"gross_profit": round2(grossProfit), "commission": round2(commission),
+			"logistics": round2(logistics), "operating_expenses": round2(operatingExpenses),
+			"operating_profit": round2(operatingProfit), "advertising": 0,
+			"net_profit": round2(netProfit),
 		},
 		"margins": gin.H{
-			"gross_margin":     round2(grossMargin),
-			"operating_margin": round2(operatingMargin),
-			"net_margin":       round2(netMargin),
-			"return_rate":      round2(returnRate),
+			"gross_margin": round2(grossMargin), "operating_margin": round2(operatingMargin),
+			"net_margin": round2(netMargin), "return_rate": round2(returnRate),
 		},
 		"metrics": gin.H{
-			"units_sold":          quantity,
-			"units_returned":      unitsReturned,
-			"active_skus":         activeSkus,
-			"avg_check":           round2(avgCheck),
+			"units_sold": quantity, "units_returned": unitsReturned,
+			"active_skus": activeSkus, "avg_check": round2(avgCheck),
 			"avg_profit_per_unit": round2(avgProfitPerUnit),
 		},
 		"changes": gin.H{
-			"gross_revenue":    changePct(grossRevenue, prevRevenue),
-			"net_revenue":      changePct(netRevenue, prevNetRevenue),
-			"cogs":             changePct(costOfGoods, prevCogs),
-			"gross_profit":     changePct(grossProfit, prevGrossProfit),
-			"commission":       changePct(commission, prevCommission),
-			"logistics":        changePct(logistics, prevLogistics),
+			"gross_revenue": changePct(grossRevenue, prevRevenue),
+			"net_revenue": changePct(netRevenue, prevNetRevenue),
+			"cogs": changePct(costOfGoods, prevCogs),
+			"gross_profit": changePct(grossProfit, prevGrossProfit),
+			"commission": changePct(commission, prevCommission),
+			"logistics": changePct(logistics, prevLogistics),
 			"operating_profit": changePct(operatingProfit, prevOperatingProfit),
-			"net_profit":       changePct(netProfit, prevProfit),
-			"revenue":          changePct(revenue, prevRevenue),
-			"profit":           changePct(profit, prevProfit),
+			"net_profit": changePct(netProfit, prevProfit),
+			"revenue": changePct(revenue, prevRevenue),
+			"profit": changePct(profit, prevProfit),
 		},
 		"by_category": byCategory,
 		"daily":       daily,
@@ -202,7 +178,7 @@ func (h *Handler) GetPnL(c *gin.Context) {
 }
 
 func (h *Handler) GetABC(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "90d")
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
@@ -248,7 +224,9 @@ func (h *Handler) GetABC(c *gin.Context) {
 		var id, name, sku, cat string
 		var rev, prof float64
 		var qty, orders int
-		rows.Scan(&id, &name, &sku, &cat, &rev, &prof, &qty, &orders)
+		if err := rows.Scan(&id, &name, &sku, &cat, &rev, &prof, &qty, &orders); err != nil {
+			continue
+		}
 		share := pct(rev, totalRevenue)
 		cumShare += share
 
@@ -298,7 +276,7 @@ func (h *Handler) GetABC(c *gin.Context) {
 }
 
 func (h *Handler) GetUnitEconomics(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "30d")
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
@@ -342,7 +320,9 @@ func (h *Handler) GetUnitEconomics(c *gin.Context) {
 		var costPrice, avgPrice, rev, prof float64
 		var qty int
 		var comm, logi, totalCost float64
-		rows.Scan(&id, &name, &sku, &cat, &costPrice, &avgPrice, &rev, &prof, &qty, &comm, &logi, &totalCost)
+		if err := rows.Scan(&id, &name, &sku, &cat, &costPrice, &avgPrice, &rev, &prof, &qty, &comm, &logi, &totalCost); err != nil {
+			continue
+		}
 
 		profitPerUnit := div(prof, float64(qty))
 		commPerUnit := div(comm, float64(qty))
@@ -354,10 +334,10 @@ func (h *Handler) GetUnitEconomics(c *gin.Context) {
 			"cost_price": round2(costPrice), "avg_price": round2(avgPrice),
 			"revenue": round2(rev), "profit": round2(prof), "quantity": qty,
 			"commission": round2(comm), "logistics": round2(logi),
-			"profit_per_unit":     round2(profitPerUnit),
+			"profit_per_unit": round2(profitPerUnit),
 			"commission_per_unit": round2(commPerUnit),
-			"logistics_per_unit":  round2(logiPerUnit),
-			"margin_pct":          round2(marginPct),
+			"logistics_per_unit": round2(logiPerUnit),
+			"margin_pct": round2(marginPct),
 		})
 
 		totRev += rev
@@ -378,7 +358,7 @@ func (h *Handler) GetUnitEconomics(c *gin.Context) {
 			"revenue": round2(totRev), "profit": round2(totProf),
 			"commission": round2(totComm), "logistics": round2(totLogi),
 			"cost_of_goods": round2(totCost), "quantity": totQty,
-			"margin_pct":          round2(pct(totProf, totRev)),
+			"margin_pct": round2(pct(totProf, totRev)),
 			"avg_profit_per_unit": round2(div(totProf, float64(totQty))),
 		},
 	})

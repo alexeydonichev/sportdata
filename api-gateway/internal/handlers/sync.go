@@ -17,7 +17,7 @@ import (
 )
 
 func (h *Handler) GetSyncStatus(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	rows, err := h.db.Query(ctx, `
 		SELECT sj.id, m.slug, m.name, sj.job_type, sj.status,
 			sj.started_at, sj.completed_at, sj.records_processed,
@@ -39,7 +39,9 @@ func (h *Handler) GetSyncStatus(c *gin.Context) {
 		var recordsProcessed int
 		var errorMsg *string
 		var createdAt time.Time
-		rows.Scan(&id, &slug, &name, &jobType, &status, &startedAt, &completedAt, &recordsProcessed, &errorMsg, &createdAt)
+		if err := rows.Scan(&id, &slug, &name, &jobType, &status, &startedAt, &completedAt, &recordsProcessed, &errorMsg, &createdAt); err != nil {
+			continue
+		}
 		item := gin.H{
 			"id": id, "marketplace": slug, "marketplace_name": name,
 			"job_type": jobType, "status": status,
@@ -63,7 +65,7 @@ func (h *Handler) GetSyncStatus(c *gin.Context) {
 }
 
 func (h *Handler) GetSyncCredentials(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	rows, err := h.db.Query(ctx, `
 		SELECT m.id, m.slug, m.name, m.api_base_url, m.is_active,
 			mc.id, mc.name, mc.client_id, mc.is_active, mc.created_at, mc.updated_at, mc.api_key_hint,
@@ -99,9 +101,11 @@ func (h *Handler) GetSyncCredentials(c *gin.Context) {
 		var sjRecords *int
 		var sjError *string
 
-		rows.Scan(&mID, &mSlug, &mName, &apiURL, &mActive,
+		if err := rows.Scan(&mID, &mSlug, &mName, &apiURL, &mActive,
 			&credID, &credName, &clientID, &credActive, &credCreated, &credUpdated, &keyHint,
-			&sjID, &sjType, &sjStatus, &sjStarted, &sjCompleted, &sjRecords, &sjError)
+			&sjID, &sjType, &sjStatus, &sjStarted, &sjCompleted, &sjRecords, &sjError); err != nil {
+			continue
+		}
 
 		status := "not_connected"
 		if credID != nil && credActive != nil && *credActive {
@@ -153,7 +157,7 @@ func (h *Handler) SaveSyncCredential(c *gin.Context) {
 		return
 	}
 
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	var mpSlug string
 	if err := h.db.QueryRow(ctx, "SELECT slug FROM marketplaces WHERE id = $1", req.MarketplaceID).Scan(&mpSlug); err != nil {
@@ -205,7 +209,7 @@ func (h *Handler) DeleteSyncCredential(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "marketplace_id обязателен"})
 		return
 	}
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	h.db.Exec(ctx, "UPDATE marketplace_credentials SET is_active = false WHERE marketplace_id = $1", mpID)
 
 	userID, _ := c.Get("user_id")
@@ -215,7 +219,7 @@ func (h *Handler) DeleteSyncCredential(c *gin.Context) {
 }
 
 func (h *Handler) GetSyncHistory(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	rows, err := h.db.Query(ctx, `
 		SELECT sj.id, m.slug, m.name, sj.job_type, sj.status,
 			sj.started_at, sj.completed_at, sj.records_processed,
@@ -239,7 +243,9 @@ func (h *Handler) GetSyncHistory(c *gin.Context) {
 		var errMsg *string
 		var createdAt time.Time
 		var durSec *int
-		rows.Scan(&id, &slug, &name, &jobType, &status, &startedAt, &completedAt, &records, &errMsg, &createdAt, &durSec)
+		if err := rows.Scan(&id, &slug, &name, &jobType, &status, &startedAt, &completedAt, &records, &errMsg, &createdAt, &durSec); err != nil {
+			continue
+		}
 		item := gin.H{
 			"id": id, "marketplace": slug, "marketplace_name": name,
 			"job_type": jobType, "status": status,
@@ -285,7 +291,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 		"credential_id": req.CredentialID,
 	})
 
-	httpReq, err := http.NewRequest("POST", etlURL+"/api/trigger", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", etlURL+"/api/trigger", bytes.NewReader(body))
 	if err != nil {
 		c.JSON(500, gin.H{"error": "internal error"})
 		return
@@ -309,7 +315,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 	}
 
 	userID, _ := c.Get("user_id")
-	h.auditLog(context.Background(), userID, "sync_triggered", "sync", "0",
+	h.auditLog(c.Request.Context(), userID, "sync_triggered", "sync", "0",
 		fmt.Sprintf(`{"marketplace":"%s","credential_id":%d}`, c.Param("marketplace"), req.CredentialID), c.ClientIP())
 
 	var result map[string]interface{}

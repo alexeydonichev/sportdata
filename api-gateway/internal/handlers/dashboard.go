@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -9,7 +8,7 @@ import (
 )
 
 func (h *Handler) GetDashboard(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "7d")
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
@@ -33,7 +32,10 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 			COALESCE(SUM(s.commission),0), COALESCE(SUM(s.logistics_cost),0),
 			COALESCE(SUM(s.quantity),0), COUNT(*)
 		%s %s`, joinClause, whereClause)
-	h.db.QueryRow(ctx, q, args...).Scan(&revenue, &profit, &commission, &logistics, &quantity, &ordersCount)
+	if err := h.db.QueryRow(ctx, q, args...).Scan(&revenue, &profit, &commission, &logistics, &quantity, &ordersCount); err != nil {
+		c.JSON(500, gin.H{"error": "db error"})
+		return
+	}
 
 	// Previous period
 	var prevRevenue, prevProfit, prevCommission, prevLogistics float64
@@ -68,7 +70,9 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 			var slug, name string
 			var rev, prof float64
 			var qty int
-			mpRows.Scan(&slug, &name, &rev, &prof, &qty)
+			if err := mpRows.Scan(&slug, &name, &rev, &prof, &qty); err != nil {
+				continue
+			}
 			share := pct(rev, revenue)
 			byMarketplace = append(byMarketplace, gin.H{
 				"marketplace": slug, "name": name,
@@ -91,7 +95,9 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 			var pid, sku, name string
 			var rev, prof float64
 			var qty int
-			topRows.Scan(&pid, &sku, &name, &rev, &prof, &qty)
+			if err := topRows.Scan(&pid, &sku, &name, &rev, &prof, &qty); err != nil {
+				continue
+			}
 			topProducts = append(topProducts, gin.H{
 				"product_id": pid, "sku": sku, "name": name,
 				"revenue": round2(rev), "profit": round2(prof), "quantity": qty,
@@ -128,7 +134,7 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 }
 
 func (h *Handler) GetDashboardChart(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "7d")
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
@@ -149,45 +155,23 @@ func (h *Handler) GetDashboardChart(c *gin.Context) {
 
 	rows, err := h.db.Query(ctx, q, args...)
 	var result []gin.H
-	hasData := false
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var date time.Time
 			var rev, prof float64
 			var orders, qty int
-			rows.Scan(&date, &rev, &prof, &orders, &qty)
+			if err := rows.Scan(&date, &rev, &prof, &orders, &qty); err != nil {
+				continue
+			}
 			result = append(result, gin.H{
 				"date": date.Format("2006-01-02"), "revenue": round2(rev),
 				"profit": round2(prof), "orders": orders, "quantity": qty,
 			})
-			hasData = true
 		}
 	}
-	if !hasData {
-		result = generateDemoChart(dateFrom, dateTo)
+	if result == nil {
+		result = []gin.H{}
 	}
 	c.JSON(200, result)
-}
-
-func generateDemoChart(dateFrom, dateTo string) []gin.H {
-	from, _ := time.Parse("2006-01-02", dateFrom)
-	to, _ := time.Parse("2006-01-02", dateTo)
-	var result []gin.H
-	seed := int64(42)
-	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
-		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		rev := 50000 + float64(seed%250000)
-		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		prof := rev * (0.15 + float64(seed%20)/100.0)
-		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		orders := 10 + int(seed%70)
-		seed = (seed*1103515245 + 12345) & 0x7fffffff
-		qty := 15 + int(seed%105)
-		result = append(result, gin.H{
-			"date": d.Format("2006-01-02"), "revenue": round2(rev),
-			"profit": round2(prof), "orders": orders, "quantity": qty,
-		})
-	}
-	return result
 }

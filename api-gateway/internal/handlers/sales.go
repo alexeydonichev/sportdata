@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -12,7 +11,7 @@ import (
 )
 
 func (h *Handler) GetSales(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "7d")
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
@@ -50,7 +49,6 @@ func (h *Handler) GetSales(c *gin.Context) {
 		LEFT JOIN categories c ON c.id = p.category_id
 		LEFT JOIN marketplaces m ON m.id = s.marketplace_id`
 
-	// Total count
 	var total int
 	countQ := fmt.Sprintf(`SELECT COUNT(*) %s %s`, joinClause, where)
 	h.db.QueryRow(ctx, countQ, args...).Scan(&total)
@@ -60,7 +58,6 @@ func (h *Handler) GetSales(c *gin.Context) {
 		pages = 1
 	}
 
-	// Items
 	dataArgs := append(args, limit, offset)
 	q := fmt.Sprintf(`
 		SELECT s.id::text, s.sale_date, COALESCE(p.name,''), COALESCE(p.sku,''),
@@ -84,7 +81,9 @@ func (h *Handler) GetSales(c *gin.Context) {
 		var saleDate time.Time
 		var qty int
 		var rev, prof, comm, logi float64
-		rows.Scan(&sid, &saleDate, &pName, &pSku, &cName, &qty, &rev, &prof, &comm, &logi, &mName, &mSlug)
+		if err := rows.Scan(&sid, &saleDate, &pName, &pSku, &cName, &qty, &rev, &prof, &comm, &logi, &mName, &mSlug); err != nil {
+			continue
+		}
 		items = append(items, gin.H{
 			"id": sid, "date": saleDate.Format("2006-01-02"),
 			"product_name": pName, "sku": pSku, "category": cName,
@@ -103,7 +102,7 @@ func (h *Handler) GetSales(c *gin.Context) {
 }
 
 func (h *Handler) GetInventory(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	categorySlug := c.Query("category")
 
 	conditions := []string{}
@@ -159,7 +158,9 @@ func (h *Handler) GetInventory(c *gin.Context) {
 		var stock int
 		var recordedAt time.Time
 		var avgDaily float64
-		rows.Scan(&pid, &name, &sku, &cat, &wh, &stock, &recordedAt, &avgDaily)
+		if err := rows.Scan(&pid, &name, &sku, &cat, &wh, &stock, &recordedAt, &avgDaily); err != nil {
+			continue
+		}
 		dos := 999
 		if avgDaily > 0 {
 			dos = int(float64(stock) / avgDaily)
@@ -188,7 +189,7 @@ func (h *Handler) GetInventory(c *gin.Context) {
 }
 
 func (h *Handler) ExportSalesCSV(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "30d")
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
@@ -230,7 +231,7 @@ func (h *Handler) ExportSalesCSV(c *gin.Context) {
 	defer rows.Close()
 
 	var csv strings.Builder
-	csv.WriteString("\xEF\xBB\xBF") // BOM for Excel
+	csv.WriteString("\xEF\xBB\xBF")
 	csv.WriteString("Дата,Товар,SKU,Категория,Маркетплейс,Кол-во,Выручка,Прибыль,Комиссия,Логистика\n")
 
 	for rows.Next() {
@@ -238,9 +239,10 @@ func (h *Handler) ExportSalesCSV(c *gin.Context) {
 		var pName, pSku, cName, mName string
 		var qty int
 		var rev, prof, comm, logi float64
-		rows.Scan(&saleDate, &pName, &pSku, &cName, &mName, &qty, &rev, &prof, &comm, &logi)
+		if err := rows.Scan(&saleDate, &pName, &pSku, &cName, &mName, &qty, &rev, &prof, &comm, &logi); err != nil {
+			continue
+		}
 
-		// Escape CSV fields
 		pName = csvEscape(pName)
 		pSku = csvEscape(pSku)
 		cName = csvEscape(cName)

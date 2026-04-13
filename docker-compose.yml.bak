@@ -1,0 +1,246 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sportdata-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sportdata}
+      POSTGRES_USER: ${POSTGRES_USER:-sportdata_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sportdata_admin} -d ${POSTGRES_DB:-sportdata}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sportdata-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  redis:
+    image: redis:7-alpine
+    container_name: sportdata-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sportdata-net
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 64M
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: sportdata-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      PASETO_SECRET_KEY: ${PASETO_SECRET_KEY}
+      JWT_SECRET: ${PASETO_SECRET_KEY}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ETL_SECRET: ${ETL_SERVICE_SECRET}
+      ETL_SERVICE_URL: http://etl-worker:8081
+      GIN_MODE: release
+      PORT: "8080"
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
+      SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD}
+      ALLOWED_ORIGINS: https://stridepax.tech
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - sportdata-net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+  etl-worker:
+    build:
+      context: ./etl-service
+      dockerfile: Dockerfile
+    container_name: sportdata-etl
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ETL_SECRET: ${ETL_SERVICE_SECRET}
+      ETL_LISTEN: ":8081"
+      SYNC_INTERVAL: "6h"
+    expose:
+      - "8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - sportdata-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 64M
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+    container_name: sportdata-frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-sportdata}
+      DB_USER: ${POSTGRES_USER:-sportdata_admin}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${PASETO_SECRET_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CREDENTIALS_MASTER_KEY: ${CREDENTIALS_MASTER_KEY:-${ENCRYPTION_KEY}}
+      ETL_SERVICE_URL: http://etl-worker:8081
+      ETL_SECRET: ${ETL_SERVICE_SECRET}
+      CRON_SECRET: ${CRON_SECRET}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-SportData}
+      NEXT_PUBLIC_API_URL: https://stridepax.tech
+      CORS_ORIGINS: https://stridepax.tech
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - sportdata-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 128M
+
+  prometheus:
+    image: prom/prometheus
+    container_name: sportdata-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - sportdata-net
+
+  grafana:
+    image: grafana/grafana
+    container_name: sportdata-grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=SportData2024!
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - sportdata-net
+
+
+  rate-limiter:
+    build:
+      context: ./rate-limiter
+      dockerfile: Dockerfile
+    container_name: sportdata-rate-limiter
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8080"
+    environment:
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      UPSTREAM_URL: http://api-gateway:8080
+      LOG_LEVEL: info
+    depends_on:
+      redis:
+        condition: service_healthy
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - sportdata-net
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  sportdata-net:
+    driver: bridge
