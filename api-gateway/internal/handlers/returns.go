@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -10,52 +11,204 @@ import (
 
 func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 	period := c.DefaultQuery("period", "30d")
-	dateFrom, dateTo := parsePeriod(period)
+	days := parseDays(period)
+	category := c.Query("category")
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 
-	var totalOrders, totalReturns int
-	var returnsAmount float64
-	h.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(quantity),0), COALESCE(SUM(returns_qty),0), COALESCE(SUM(returns_amount),0)
-		FROM sales WHERE sale_date >= $1 AND sale_date <= $2
-	`, dateFrom, dateTo).Scan(&totalOrders, &totalReturns, &returnsAmount)
-
-	returnRate := pct(float64(totalReturns), float64(totalOrders))
-
-	rows, _ := h.db.Query(ctx, `
-		SELECT p.name, COALESCE(SUM(s.returns_qty),0) as ret, COALESCE(SUM(s.quantity),0) as qty
-		FROM sales s JOIN products p ON p.id = s.product_id
-		WHERE s.sale_date >= $1 AND s.sale_date <= $2 AND s.returns_qty > 0
-		GROUP BY p.name ORDER BY ret DESC LIMIT 20
-	`, dateFrom, dateTo)
-	defer rows.Close()
-
-	type retProduct struct {
-		Name       string  `json:"name"`
-		Returns    int     `json:"returns"`
-		Quantity   int     `json:"quantity"`
-		ReturnRate float64 `json:"return_rate"`
+	params := []interface{}{days}
+	catF := ""
+	if category != "" && category != "all" {
+		params = append(params, category)
+		catF = fmt.Sprintf("AND c.slug=$%d", len(params))
 	}
-	var products []retProduct
-	for rows.Next() {
-		var rp retProduct
-		rows.Scan(&rp.Name, &rp.Returns, &rp.Quantity)
-		rp.ReturnRate = round2(pct(float64(rp.Returns), float64(rp.Quantity)))
-		products = append(products, rp)
+
+	// Current period sales
+	var totalSales int
+	var totalRevenue, totalProfit float64
+	h.db.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COALESCE(SUM(s.quantity),0)::int, COALESCE(SUM(s.revenue),0)::float8, COALESCE(SUM(s.net_profit),0)::float8
+		FROM sales s JOIN products p ON p.id=s.product_id LEFT JOIN categories c ON c.id=p.category_id
+		WHERE s.sale_date>=CURRENT_DATE-$1::int AND s.quantity>0 %s
+	`, catF), params...).Scan(&totalSales, &totalRevenue, &totalProfit)
+
+	// Current period returns
+	var curReturns int
+	var curRetAmount, curLogCost float64
+	h.db.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COALESCE(SUM(r.quantity),0)::int, COALESCE(SUM(r.return_amount),0)::float8, COALESCE(SUM(r.logistics_cost),0)::float8
+		FROM returns r JOIN products p ON p.id=r.product_id LEFT JOIN categories c ON c.id=p.category_id
+		WHERE r.return_date>=CURRENT_DATE-$1::int %s
+	`, catF), params...).Scan(&curReturns, &curRetAmount, &curLogCost)
+
+	// Previous period
+	var prevReturns int
+	var prevRetAmount float64
+	var prevSales int
+	h.db.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COALESCE(SUM(r.quantity),0)::int, COALESCE(SUM(r.return_amount),0)::float8
+		FROM returns r JOIN products p ON p.id=r.product_id LEFT JOIN categories c ON c.id=p.category_id
+		WHERE r.return_date>=CURRENT_DATE-($1::int*2) AND r.return_date<CURRENT_DATE-$1::int %s
+	`, catF), params...).Scan(&prevReturns, &prevRetAmount)
+	h.db.QueryRow(ctx, fmt.Sprintf(`
+		SELECT COALESCE(SUM(s.quantity),0)::int
+		FROM sales s JOIN products p ON p.id=s.product_id LEFT JOIN categories c ON c.id=p.category_id
+		WHERE s.sale_date>=CURRENT_DATE-($1::int*2) AND s.sale_date<CURRENT_DATE-$1::int AND s.quantity>0 %s
+	`, catF), params...).Scan(&prevSales)
+
+	curRate := 0.0
+	if (totalSales + curReturns) > 0 {
+		curRate = float64(curReturns) / float64(totalSales+curReturns) * 100
 	}
-	if products == nil {
-		products = []retProduct{}
+	prevRate := 0.0
+	if (prevSales + prevReturns) > 0 {
+		prevRate = float64(prevReturns) / float64(prevSales+prevReturns) * 100
+	}
+	avgProfit := 0.0
+	if totalSales > 0 {
+		avgProfit = totalProfit / float64(totalSales)
+	}
+	lostProfit := avgProfit * float64(curReturns)
+
+	// Daily
+	dRows, _ := h.db.Query(ctx, fmt.Sprintf(`
+		WITH ds AS (
+			SELECT s.sale_date AS d, COALESCE(SUM(s.quantity),0)::int AS sales
+			FROM sales s JOIN products p ON p.id=s.product_id LEFT JOIN categories c ON c.id=p.category_id
+			WHERE s.sale_date>=CURRENT_DATE-$1::int AND s.quantity>0 %s GROUP BY s.sale_date
+		), dr AS (
+			SELECT r.return_date AS d, COALESCE(SUM(r.quantity),0)::int AS returns
+			FROM returns r JOIN products p ON p.id=r.product_id LEFT JOIN categories c ON c.id=p.category_id
+			WHERE r.return_date>=CURRENT_DATE-$1::int %s GROUP BY r.return_date
+		)
+		SELECT COALESCE(ds.d,dr.d)::text, COALESCE(ds.sales,0), COALESCE(dr.returns,0)
+		FROM ds FULL OUTER JOIN dr ON ds.d=dr.d ORDER BY 1
+	`, catF, catF), params...)
+	defer dRows.Close()
+	var daily []gin.H
+	for dRows.Next() {
+		var dt string
+		var s, r int
+		dRows.Scan(&dt, &s, &r)
+		rr := 0.0
+		if (s + r) > 0 {
+			rr = round2(float64(r) / float64(s+r) * 100)
+		}
+		daily = append(daily, gin.H{"date": dt, "sales": s, "returns": r, "return_rate": rr})
+	}
+	if daily == nil {
+		daily = []gin.H{}
+	}
+
+	// By product
+	pRows, _ := h.db.Query(ctx, `
+		WITH ps AS (
+			SELECT product_id, SUM(quantity)::int AS sq, SUM(revenue)::float8 AS sa
+			FROM sales WHERE sale_date>=CURRENT_DATE-$1::int AND quantity>0 GROUP BY product_id
+		), pr AS (
+			SELECT product_id, SUM(quantity)::int AS rq, COALESCE(SUM(return_amount),0)::float8 AS ra
+			FROM returns WHERE return_date>=CURRENT_DATE-$1::int GROUP BY product_id
+		)
+		SELECT p.id, p.name, p.sku, COALESCE(c.name,'N/A'),
+			COALESCE(ps.sq,0), COALESCE(pr.rq,0), COALESCE(pr.ra,0)
+		FROM pr JOIN products p ON p.id=pr.product_id
+		LEFT JOIN categories c ON c.id=p.category_id
+		LEFT JOIN ps ON ps.product_id=p.id
+		ORDER BY pr.rq DESC LIMIT 50
+	`, days)
+	defer pRows.Close()
+	var byProduct []gin.H
+	for pRows.Next() {
+		var pid int
+		var nm, sku, cat string
+		var sq, rq int
+		var ra float64
+		pRows.Scan(&pid, &nm, &sku, &cat, &sq, &rq, &ra)
+		rr := 0.0
+		if (sq + rq) > 0 {
+			rr = round2(float64(rq) / float64(sq+rq) * 100)
+		}
+		byProduct = append(byProduct, gin.H{
+			"product_id": pid, "name": nm, "sku": sku, "category": cat,
+			"sales_qty": sq, "return_qty": rq, "return_rate": rr, "return_amount": round2(ra),
+		})
+	}
+	if byProduct == nil {
+		byProduct = []gin.H{}
+	}
+
+	// By category
+	catRows, _ := h.db.Query(ctx, `
+		WITH cs AS (
+			SELECT p.category_id, SUM(s.quantity)::int AS sq
+			FROM sales s JOIN products p ON p.id=s.product_id
+			WHERE s.sale_date>=CURRENT_DATE-$1::int AND s.quantity>0 GROUP BY p.category_id
+		), cr AS (
+			SELECT p.category_id, SUM(r.quantity)::int AS rq, COALESCE(SUM(r.return_amount),0)::float8 AS ra
+			FROM returns r JOIN products p ON p.id=r.product_id
+			WHERE r.return_date>=CURRENT_DATE-$1::int GROUP BY p.category_id
+		)
+		SELECT COALESCE(c.name,'N/A'), COALESCE(cs.sq,0), COALESCE(cr.rq,0), COALESCE(cr.ra,0)
+		FROM cr LEFT JOIN categories c ON c.id=cr.category_id
+		LEFT JOIN cs ON cs.category_id=cr.category_id
+		ORDER BY cr.rq DESC
+	`, days)
+	defer catRows.Close()
+	var byCategory []gin.H
+	for catRows.Next() {
+		var cn string
+		var sq, rq int
+		var ra float64
+		catRows.Scan(&cn, &sq, &rq, &ra)
+		rr := 0.0
+		if (sq + rq) > 0 {
+			rr = round2(float64(rq) / float64(sq+rq) * 100)
+		}
+		byCategory = append(byCategory, gin.H{"category": cn, "sales_qty": sq, "return_qty": rq, "return_rate": rr, "return_amount": round2(ra)})
+	}
+	if byCategory == nil {
+		byCategory = []gin.H{}
+	}
+
+	// By warehouse
+	whRows, _ := h.db.Query(ctx, fmt.Sprintf(`
+		SELECT COALESCE(r.warehouse,'Unknown'), COALESCE(SUM(r.quantity),0)::int, COALESCE(SUM(r.return_amount),0)::float8
+		FROM returns r JOIN products p ON p.id=r.product_id LEFT JOIN categories c ON c.id=p.category_id
+		WHERE r.return_date>=CURRENT_DATE-$1::int %s
+		GROUP BY r.warehouse ORDER BY SUM(r.quantity) DESC
+	`, catF), params...)
+	defer whRows.Close()
+	var byWarehouse []gin.H
+	for whRows.Next() {
+		var wh string
+		var rq int
+		var ra float64
+		whRows.Scan(&wh, &rq, &ra)
+		byWarehouse = append(byWarehouse, gin.H{"warehouse": wh, "return_qty": rq, "return_amount": round2(ra)})
+	}
+	if byWarehouse == nil {
+		byWarehouse = []gin.H{}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"period": period,
 		"summary": gin.H{
-			"total_returns":  totalReturns,
-			"returns_amount": round2(returnsAmount),
-			"return_rate":    round2(returnRate),
+			"total_returns":    curReturns,
+			"total_sales":      totalSales,
+			"return_rate":      round2(curRate),
+			"return_amount":    round2(curRetAmount),
+			"lost_profit":      round2(lostProfit),
+			"return_logistics": round2(curLogCost),
 		},
-		"top_returned_products": products,
-		"period":                gin.H{"from": dateFrom, "to": dateTo},
+		"changes": gin.H{
+			"returns":       pctChange(float64(curReturns), float64(prevReturns)),
+			"return_rate":   pctChange(curRate, prevRate),
+			"return_amount": pctChange(curRetAmount, prevRetAmount),
+		},
+		"daily":        daily,
+		"by_product":   byProduct,
+		"by_category":  byCategory,
+		"by_warehouse": byWarehouse,
 	})
 }

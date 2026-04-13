@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -11,7 +10,7 @@ import (
 )
 
 func (h *Handler) GetNotifications(c *gin.Context) {
-	ctx := context.Background()
+	ctx := c.Request.Context()
 
 	var alerts []gin.H
 	var criticalCount, warningCount, infoCount int

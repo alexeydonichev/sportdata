@@ -127,3 +127,40 @@ func (h *Handler) HealthCheck(c *gin.Context) {
 		"version":  "2.0.0",
 	})
 }
+
+// ── Дополнительные утилиты ───────────────────────────────────────────
+
+// parseDays извлекает количество дней из строки периода ("7d" → 7, "30d" → 30 и т.д.)
+func parseDays(period string) int {
+	switch period {
+	case "today":
+		return 1
+	case "yesterday":
+		return 1
+	case "7d":
+		return 7
+	case "14d":
+		return 14
+	case "30d":
+		return 30
+	case "90d":
+		return 90
+	case "180d":
+		return 180
+	case "365d", "1y":
+		return 365
+	default:
+		return 30
+	}
+}
+
+// pctChange — процентное изменение от previous к current
+func pctChange(current, previous float64) float64 {
+	if previous == 0 {
+		if current > 0 {
+			return 100
+		}
+		return 0
+	}
+	return round2((current - previous) / previous * 100)
+}

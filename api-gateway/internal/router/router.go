@@ -16,6 +16,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(gin.Logger())
 
 	proxies := os.Getenv("TRUSTED_PROXIES")
 	if proxies == "" {
@@ -58,9 +59,17 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/analytics/abc", middleware.RoleRequired(4), h.GetABC)
 		auth.GET("/analytics/unit-economics", middleware.RoleRequired(4), h.GetUnitEconomics)
 		auth.GET("/analytics/trending", middleware.RoleRequired(4), h.GetTrending)
+		auth.GET("/analytics/categories", middleware.RoleRequired(4), h.GetCategoriesAnalytics)
+		auth.GET("/analytics/brands", middleware.RoleRequired(4), h.GetBrandsAnalytics)
+		auth.GET("/analytics/geography", middleware.RoleRequired(4), h.GetGeography)
+		auth.GET("/analytics/warehouses", middleware.RoleRequired(4), h.GetWarehousesAnalytics)
+		auth.GET("/analytics/finance", middleware.RoleRequired(4), h.GetFinance)
+		auth.GET("/analytics/returns", middleware.RoleRequired(4), h.GetReturnsAnalytics)
 
-		// Проекты
 		auth.GET("/projects", middleware.RoleRequired(4), h.GetProjects)
+
+		auth.GET("/invites", middleware.RoleRequired(2), h.GetInvites)
+		auth.POST("/invites", middleware.RoleRequired(2), h.CreateInvite)
 
 		mgmt := auth.Group("")
 		mgmt.Use(middleware.RoleRequired(2))
@@ -92,29 +101,19 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 			sa.GET("/users/all", h.GetAllUsersIncludingHidden)
 		}
 
-		// РНП (Рука На Пульсе)
 		rnp := auth.Group("/rnp")
 		rnp.Use(middleware.RoleRequired(4))
 		{
-			// Справочники
 			rnp.GET("/managers", h.GetManagers)
 			rnp.GET("/checklist-templates", h.GetChecklistTemplates)
-
-			// Шаблоны РНП
 			rnp.GET("/templates", h.GetRNPTemplates)
 			rnp.POST("/templates", middleware.RoleRequired(3), h.CreateRNPTemplate)
 			rnp.GET("/templates/:id", h.GetRNPItems)
 			rnp.POST("/templates/:id/items", h.CreateRNPItem)
-
-			// Товары в РНП
 			rnp.PATCH("/items/:itemId", h.UpdateRNPItem)
 			rnp.DELETE("/items/:itemId", h.DeleteRNPItem)
-
-			// Дневная статистика
 			rnp.GET("/items/:itemId/daily", h.GetRNPDailyStats)
 			rnp.POST("/items/:itemId/daily", h.SaveRNPDailyStat)
-
-			// Чек-лист товара
 			rnp.GET("/items/:itemId/checklist", h.GetRNPChecklist)
 			rnp.POST("/items/:itemId/checklist/init", h.InitRNPChecklist)
 			rnp.PATCH("/checklist/:checklistId", h.UpdateRNPChecklistItem)
