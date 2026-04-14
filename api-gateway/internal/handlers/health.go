@@ -13,13 +13,19 @@ func (h *Handler) Health(c *gin.Context) {
 	defer cancel()
 
 	dbOK := h.db.Ping(ctx) == nil
-	redisOK := h.redis.Ping(ctx).Err() == nil
+
+	redisOK := false
+	if h.redis != nil {
+		redisOK = h.redis.Ping(ctx).Err() == nil
+	}
 
 	status := "healthy"
 	code := http.StatusOK
-	if !dbOK || !redisOK {
+	if !dbOK {
 		status = "degraded"
 		code = http.StatusServiceUnavailable
+	} else if !redisOK {
+		status = "degraded"
 	}
 
 	c.JSON(code, gin.H{

@@ -2,11 +2,13 @@ package router
 
 import (
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"sportdata/api-gateway/internal/cache"
 	"sportdata/api-gateway/internal/handlers"
 	"sportdata/api-gateway/internal/middleware"
 )
@@ -23,83 +25,88 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		r.SetTrustedProxies(nil)
 	}
 
-	rl := middleware.NewRateLimiter(30, 60)
+	rl := middleware.NewRateLimiter(120, 60)
 	r.Use(rl.RateLimit())
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.CORS())
 
 	h := handlers.New(db, redisClient)
 
+	// Cache layers
+	c30s := cache.CacheMiddleware(redisClient, 30*time.Second)
+	c60s := cache.CacheMiddleware(redisClient, 60*time.Second)
+	c5m := cache.CacheMiddleware(redisClient, 5*time.Minute)
+
 	// ── Public (no auth) ────────────────────────────────────
 	r.GET("/health", h.Health)
 	r.GET("/api/v1/health", h.Health)
 	r.POST("/api/v1/auth/login", h.Login)
-	r.POST("/api/v1/auth/register", h.Register) // FIX #1: was missing
+	r.POST("/api/v1/auth/register", h.Register)
 
 	// ── Authenticated ───────────────────────────────────────
 	auth := r.Group("/api/v1")
 	auth.Use(middleware.AuthRequired())
 	{
-		// --- auth / profile ---
+		// --- auth / profile (no cache — user-specific mutable) ---
 		auth.GET("/auth/me", middleware.RoleRequired(4), h.GetMe)
-		auth.GET("/auth/profile", middleware.RoleRequired(4), h.GetProfile)   // FIX #4: frontend calls /auth/profile
-		auth.PUT("/auth/avatar", middleware.RoleRequired(4), h.UploadAvatar)  // FIX #2: was missing
-		auth.PUT("/auth/password", middleware.RoleRequired(4), h.ChangePassword) // FIX #3: was missing
-		auth.GET("/profile", middleware.RoleRequired(4), h.GetProfile)        // keep old path for compat
+		auth.GET("/auth/profile", middleware.RoleRequired(4), h.GetProfile)
+		auth.PUT("/auth/avatar", middleware.RoleRequired(4), h.UploadAvatar)
+		auth.PUT("/auth/password", middleware.RoleRequired(4), h.ChangePassword)
+		auth.GET("/profile", middleware.RoleRequired(4), h.GetProfile)
 
-		// --- dashboard ---
-		auth.GET("/dashboard", middleware.RoleRequired(4), h.GetDashboard)
-		auth.GET("/dashboard/chart", middleware.RoleRequired(4), h.GetDashboardChart)
+		// --- dashboard (cached 30s) ---
+		auth.GET("/dashboard", c30s, middleware.RoleRequired(4), h.GetDashboard)
+		auth.GET("/dashboard/chart", c30s, middleware.RoleRequired(4), h.GetDashboardChart)
 
-		// --- products ---
-		auth.GET("/products", middleware.RoleRequired(4), h.GetProducts)
+		// --- products (cached 30s) ---
+		auth.GET("/products", c30s, middleware.RoleRequired(4), h.GetProducts)
 		auth.POST("/products/bulk-cost", middleware.RoleRequired(3), h.BulkUpdateCostPrice)
-		auth.GET("/products/categories", middleware.RoleRequired(4), h.GetCategories) // FIX #6: frontend calls /products/categories
-		auth.GET("/products/:id", middleware.RoleRequired(4), h.GetProductDetail)
+		auth.GET("/products/categories", c5m, middleware.RoleRequired(4), h.GetCategories)
+		auth.GET("/products/:id", c30s, middleware.RoleRequired(4), h.GetProductDetail)
 		auth.PATCH("/products/:id", middleware.RoleRequired(3), h.UpdateProduct)
 
-		// --- references ---
-		auth.GET("/categories", middleware.RoleRequired(4), h.GetCategories)
-		auth.GET("/marketplaces", middleware.RoleRequired(4), h.GetMarketplaces)
+		// --- references (cached 5m) ---
+		auth.GET("/categories", c5m, middleware.RoleRequired(4), h.GetCategories)
+		auth.GET("/marketplaces", c5m, middleware.RoleRequired(4), h.GetMarketplaces)
 
-		// --- sales ---
-		auth.GET("/sales", middleware.RoleRequired(4), h.GetSales)
+		// --- sales (cached 30s) ---
+		auth.GET("/sales", c30s, middleware.RoleRequired(4), h.GetSales)
 		auth.GET("/sales/export", middleware.RoleRequired(4), h.ExportSalesCSV)
 
-		// --- export ---
+		// --- export (no cache — file downloads) ---
 		auth.GET("/export/sales", middleware.RoleRequired(4), h.ExportSales)
 		auth.GET("/export/products", middleware.RoleRequired(4), h.ExportProducts)
 		auth.GET("/export/analytics", middleware.RoleRequired(4), h.ExportAnalytics)
 
-		// --- inventory ---
-		auth.GET("/inventory", middleware.RoleRequired(4), h.GetInventory)
+		// --- inventory (cached 60s) ---
+		auth.GET("/inventory", c60s, middleware.RoleRequired(4), h.GetInventory)
 
-		// --- notifications ---
-		auth.GET("/notifications", middleware.RoleRequired(4), h.GetNotifications)
+		// --- notifications (cached 60s) ---
+		auth.GET("/notifications", c60s, middleware.RoleRequired(4), h.GetNotifications)
 
-		// --- analytics ---
-		auth.GET("/analytics/pnl", middleware.RoleRequired(4), h.GetPnL)
-		auth.GET("/analytics/abc", middleware.RoleRequired(4), h.GetABC)
-		auth.GET("/analytics/unit-economics", middleware.RoleRequired(4), h.GetUnitEconomics)
-		auth.GET("/analytics/trending", middleware.RoleRequired(4), h.GetTrending)
-		auth.GET("/analytics/categories", middleware.RoleRequired(4), h.GetCategoriesAnalytics)
-		auth.GET("/analytics/brands", middleware.RoleRequired(4), h.GetBrandsAnalytics)
-		auth.GET("/analytics/geography", middleware.RoleRequired(4), h.GetGeography)
-		auth.GET("/analytics/warehouses", middleware.RoleRequired(4), h.GetWarehousesAnalytics)
-		auth.GET("/analytics/finance", middleware.RoleRequired(4), h.GetFinance)
-		auth.GET("/analytics/returns", middleware.RoleRequired(4), h.GetReturnsAnalytics)
-		auth.GET("/analytics/rnp", middleware.RoleRequired(4), h.GetAnalyticsRNP) // NEW #1: analytics/rnp
+		// --- analytics (cached 60s) ---
+		auth.GET("/analytics/pnl", c60s, middleware.RoleRequired(4), h.GetPnL)
+		auth.GET("/analytics/abc", c60s, middleware.RoleRequired(4), h.GetABC)
+		auth.GET("/analytics/unit-economics", c60s, middleware.RoleRequired(4), h.GetUnitEconomics)
+		auth.GET("/analytics/trending", c60s, middleware.RoleRequired(4), h.GetTrending)
+		auth.GET("/analytics/categories", c60s, middleware.RoleRequired(4), h.GetCategoriesAnalytics)
+		auth.GET("/analytics/brands", c60s, middleware.RoleRequired(4), h.GetBrandsAnalytics)
+		auth.GET("/analytics/geography", c60s, middleware.RoleRequired(4), h.GetGeography)
+		auth.GET("/analytics/warehouses", c60s, middleware.RoleRequired(4), h.GetWarehousesAnalytics)
+		auth.GET("/analytics/finance", c60s, middleware.RoleRequired(4), h.GetFinance)
+		auth.GET("/analytics/returns", c60s, middleware.RoleRequired(4), h.GetReturnsAnalytics)
+		auth.GET("/analytics/rnp", c60s, middleware.RoleRequired(4), h.GetAnalyticsRNP)
 
-		// --- projects ---
-		auth.GET("/projects", middleware.RoleRequired(4), h.GetProjects)
+		// --- projects (cached 60s) ---
+		auth.GET("/projects", c60s, middleware.RoleRequired(4), h.GetProjects)
 
-		// --- invites ---
+		// --- invites (no cache — mutable) ---
 		auth.GET("/invites", middleware.RoleRequired(2), h.GetInvites)
 		auth.POST("/invites", middleware.RoleRequired(2), h.CreateInvite)
 
 		// --- supplier (proxy to WB/Ozon) ---
-		auth.GET("/supplier/sales", middleware.RoleRequired(4), h.GetSupplierSales)   // NEW #2
-		auth.GET("/supplier/stocks", middleware.RoleRequired(4), h.GetSupplierStocks) // NEW #3
+		auth.GET("/supplier/sales", middleware.RoleRequired(4), h.GetSupplierSales)
+		auth.GET("/supplier/stocks", middleware.RoleRequired(4), h.GetSupplierStocks)
 
 		// ── Management (role 2+) ────────────────────────────
 		mgmt := auth.Group("")
@@ -112,7 +119,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 			mgmt.GET("/sync/history", h.GetSyncHistory)
 			mgmt.POST("/sync/trigger/:marketplace", h.TriggerSync)
 			mgmt.POST("/sync/trigger", h.TriggerSync)
-			mgmt.POST("/sync/cron", h.CronSync) // FIX #5 (was missing, handler exists)
+			mgmt.POST("/sync/cron", h.CronSync)
 		}
 
 		// ── Owners (role 1) ─────────────────────────────────
