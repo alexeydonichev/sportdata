@@ -8,9 +8,8 @@ ALTER TABLE sales
 ADD COLUMN IF NOT EXISTS country VARCHAR(100),
 ADD COLUMN IF NOT EXISTS region VARCHAR(200),
 ADD COLUMN IF NOT EXISTS warehouse VARCHAR(200),
-ADD COLUMN IF NOT EXISTS warehouse_type VARCHAR(50); -- FBO, FBS, etc.
+ADD COLUMN IF NOT EXISTS warehouse_type VARCHAR(50);
 
--- Индексы для быстрых запросов по географии
 CREATE INDEX IF NOT EXISTS idx_sales_country ON sales(country);
 CREATE INDEX IF NOT EXISTS idx_sales_warehouse ON sales(warehouse);
 CREATE INDEX IF NOT EXISTS idx_sales_region ON sales(region);
@@ -28,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_returns_warehouse ON returns(warehouse);
 CREATE INDEX IF NOT EXISTS idx_returns_date ON returns(return_date);
 
 -- ============================================
--- ТАБЛИЦА ПВЗ (опционально, для детальной аналитики)
+-- ТАБЛИЦА ПВЗ
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS pickup_points (
@@ -44,15 +43,16 @@ CREATE TABLE IF NOT EXISTS pickup_points (
     UNIQUE(marketplace_id, external_id)
 );
 
--- Связь продаж с ПВЗ
 ALTER TABLE sales
 ADD COLUMN IF NOT EXISTS pickup_point_id INT REFERENCES pickup_points(id);
 
 -- ============================================
--- ОБНОВЛЕНИЕ VIEW
+-- ОБНОВЛЕНИЕ VIEW (DROP + CREATE — нельзя OR REPLACE при смене колонок)
 -- ============================================
 
-CREATE OR REPLACE VIEW v_daily_sales AS
+DROP VIEW IF EXISTS v_daily_sales;
+
+CREATE VIEW v_daily_sales AS
 SELECT 
     s.sale_date,
     p.sku,

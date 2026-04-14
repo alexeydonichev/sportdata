@@ -56,6 +56,8 @@ services:
       context: ./api-gateway
       dockerfile: Dockerfile
     container_name: sportdata-api
+    volumes:
+      - ./migrations:/app/migrations:ro
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
@@ -74,6 +76,7 @@ services:
       SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD}
       SUPERADMIN_TOTP_SECRET: ${SUPERADMIN_TOTP_SECRET}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+      MIGRATIONS_DIR: /app/migrations
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

@@ -32,6 +32,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 
 	// ── Public (no auth) ────────────────────────────────────
 	r.GET("/health", h.Health)
+	r.GET("/api/v1/health", h.Health)
 	r.POST("/api/v1/auth/login", h.Login)
 	r.POST("/api/v1/auth/register", h.Register) // FIX #1: was missing
 

@@ -5,6 +5,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,6 +34,8 @@ func main() {
 	}
 	log.Println("PostgreSQL connected")
 
+	runMigrations(db)
+
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:     getEnv("REDIS_URL", "localhost:6379"),
 		Password: getEnv("REDIS_PASSWORD", ""),
@@ -50,6 +54,73 @@ func main() {
 	log.Printf("API listening on :%s", port)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Server failed: %v", err)
+	}
+}
+
+func runMigrations(db *pgxpool.Pool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	_, err := db.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			filename TEXT PRIMARY KEY,
+			applied_at TIMESTAMPTZ DEFAULT now()
+		)
+	`)
+	if err != nil {
+		log.Fatalf("Failed to create schema_migrations table: %v", err)
+	}
+
+	migrationsDir := getEnv("MIGRATIONS_DIR", "migrations")
+	files, err := filepath.Glob(filepath.Join(migrationsDir, "*.sql"))
+	if err != nil || len(files) == 0 {
+		log.Printf("No migration files found in %s", migrationsDir)
+		return
+	}
+	sort.Strings(files)
+
+	applied := 0
+	for _, file := range files {
+		filename := filepath.Base(file)
+
+		var exists bool
+		err := db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename = $1)", filename).Scan(&exists)
+		if err != nil {
+			log.Fatalf("Migration check failed for %s: %v", filename, err)
+		}
+		if exists {
+			continue
+		}
+
+		content, err := os.ReadFile(file)
+		if err != nil {
+			log.Fatalf("Failed to read migration %s: %v", filename, err)
+		}
+
+		sql := string(content)
+		if strings.TrimSpace(sql) == "" {
+			continue
+		}
+
+		log.Printf("Applying migration: %s", filename)
+		_, err = db.Exec(ctx, sql)
+		if err != nil {
+			log.Fatalf("Migration %s failed: %v", filename, err)
+		}
+
+		_, err = db.Exec(ctx, "INSERT INTO schema_migrations (filename) VALUES ($1)", filename)
+		if err != nil {
+			log.Fatalf("Failed to record migration %s: %v", filename, err)
+		}
+
+		applied++
+		log.Printf("Migration applied: %s", filename)
+	}
+
+	if applied == 0 {
+		log.Println("Migrations: all up to date")
+	} else {
+		log.Printf("Migrations: %d applied", applied)
 	}
 }
 
