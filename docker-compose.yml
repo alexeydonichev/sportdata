@@ -123,7 +123,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      target: dev
+      target: production
     container_name: sportdata-frontend
     restart: unless-stopped
     environment:
