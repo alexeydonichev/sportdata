@@ -161,6 +161,12 @@ services:
       - '--storage.tsdb.retention.time=15d'
     ports:
       - "127.0.0.1:9090:9090"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
     networks:
       - sportdata-net
 
@@ -176,6 +182,12 @@ services:
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
     volumes:
       - grafana_data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+        reservations:
+          memory: 64M
     networks:
       - sportdata-net
 
