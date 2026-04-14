@@ -127,19 +127,7 @@ services:
     container_name: sportdata-frontend
     restart: unless-stopped
     environment:
-      NODE_ENV: development
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-sportdata}
-      ETL_SERVICE_URL: http://etl-worker:8081
-      API_GATEWAY_URL: http://api-gateway:8080
-      ETL_SECRET: ${ETL_SERVICE_SECRET}
-      DB_USER: ${POSTGRES_USER:-sportdata_admin}
-      DB_PASSWORD: ${POSTGRES_PASSWORD}
-      JWT_SECRET: ${PASETO_SECRET_KEY}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      CREDENTIALS_MASTER_KEY: ${CREDENTIALS_MASTER_KEY:-${ENCRYPTION_KEY}}
-      CRON_SECRET: ${CRON_SECRET}
+      NODE_ENV: production
       NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-SportData}
       NEXT_PUBLIC_API_URL: https://stridepax.tech
       CORS_ORIGINS: https://stridepax.tech
