@@ -5,16 +5,14 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ── Математика ───────────────────────────────────────────────────────
-
-func round2(v float64) float64 {
-	return math.Round(v*100) / 100
-}
+func round2(v float64) float64  { return math.Round(v*100) / 100 }
 
 func pct(part, total float64) float64 {
 	if total == 0 {
@@ -40,37 +38,66 @@ func changePct(current, previous float64) float64 {
 	return round2((current - previous) / previous * 100)
 }
 
-func changeDiff(current, previous float64) float64 {
-	return round2(current - previous)
+func changeDiff(current, previous float64) float64 { return round2(current - previous) }
+
+func pctChange(current, previous float64) float64 { return changePct(current, previous) }
+
+var (
+	cachedMaxDate   time.Time
+	maxDateMu       sync.Mutex
+	maxDateCachedAt time.Time
+)
+
+func getMaxSaleDate(db *pgxpool.Pool) time.Time {
+	maxDateMu.Lock()
+	defer maxDateMu.Unlock()
+	if !cachedMaxDate.IsZero() && time.Since(maxDateCachedAt) < 5*time.Minute {
+		return cachedMaxDate
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var maxDate time.Time
+	err := db.QueryRow(ctx,
+		"SELECT COALESCE(MAX(sale_date), CURRENT_DATE) FROM sales").
+		Scan(&maxDate)
+	if err != nil || maxDate.IsZero() {
+		maxDate = time.Now()
+	}
+	cachedMaxDate = maxDate
+	maxDateCachedAt = time.Now()
+	return cachedMaxDate
 }
 
-// ── Период ───────────────────────────────────────────────────────────
-
-func parsePeriod(period string) (string, string) {
-	now := time.Now()
-	dateTo := now.Format("2006-01-02")
-
+func periodRange(anchor time.Time, period string) (string, string) {
+	to := anchor.Format("2006-01-02")
 	switch period {
 	case "today":
-		return dateTo, dateTo
+		return to, to
 	case "yesterday":
-		y := now.AddDate(0, 0, -1).Format("2006-01-02")
-		return y, y
+		return anchor.AddDate(0, 0, -1).Format("2006-01-02"), anchor.AddDate(0, 0, -1).Format("2006-01-02")
 	case "7d":
-		return now.AddDate(0, 0, -7).Format("2006-01-02"), dateTo
+		return anchor.AddDate(0, 0, -7).Format("2006-01-02"), to
 	case "14d":
-		return now.AddDate(0, 0, -14).Format("2006-01-02"), dateTo
+		return anchor.AddDate(0, 0, -14).Format("2006-01-02"), to
 	case "30d":
-		return now.AddDate(0, 0, -30).Format("2006-01-02"), dateTo
+		return anchor.AddDate(0, 0, -30).Format("2006-01-02"), to
 	case "90d":
-		return now.AddDate(0, 0, -90).Format("2006-01-02"), dateTo
+		return anchor.AddDate(0, 0, -90).Format("2006-01-02"), to
 	case "180d":
-		return now.AddDate(0, 0, -180).Format("2006-01-02"), dateTo
+		return anchor.AddDate(0, 0, -180).Format("2006-01-02"), to
 	case "365d", "1y":
-		return now.AddDate(-1, 0, 0).Format("2006-01-02"), dateTo
+		return anchor.AddDate(-1, 0, 0).Format("2006-01-02"), to
 	default:
-		return now.AddDate(0, 0, -7).Format("2006-01-02"), dateTo
+		return anchor.AddDate(0, 0, -7).Format("2006-01-02"), to
 	}
+}
+
+func parsePeriod(period string) (string, string) {
+	return periodRange(time.Now(), period)
+}
+
+func (h *Handler) parsePeriod(period string) (string, string) {
+	return periodRange(getMaxSaleDate(h.db), period)
 }
 
 func prevPeriod(dateFrom, dateTo string) (string, string) {
@@ -82,13 +109,10 @@ func prevPeriod(dateFrom, dateTo string) (string, string) {
 	return prevFrom.Format("2006-01-02"), prevTo.Format("2006-01-02")
 }
 
-// ── Фильтры SQL ─────────────────────────────────────────────────────
-
 func buildSalesWhere(dateFrom, dateTo, category, marketplace string) (string, []interface{}) {
 	where := " WHERE s.sale_date >= $1 AND s.sale_date <= $2"
 	args := []interface{}{dateFrom, dateTo}
 	idx := 3
-
 	if category != "" && category != "all" {
 		where += fmt.Sprintf(" AND c.slug = $%d", idx)
 		args = append(args, category)
@@ -101,17 +125,13 @@ func buildSalesWhere(dateFrom, dateTo, category, marketplace string) (string, []
 	return where, args
 }
 
-// buildSalesWherePrev — алиас, оставлен для читаемости вызывающего кода.
 func buildSalesWherePrev(dateFrom, dateTo, category, marketplace string) (string, []interface{}) {
 	return buildSalesWhere(dateFrom, dateTo, category, marketplace)
 }
 
-// ── Health Check ─────────────────────────────────────────────────────
-
 func (h *Handler) HealthCheck(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
-
 	dbOK := h.db.Ping(ctx) == nil
 	status := "ok"
 	code := http.StatusOK
@@ -119,23 +139,15 @@ func (h *Handler) HealthCheck(c *gin.Context) {
 		status = "degraded"
 		code = http.StatusServiceUnavailable
 	}
-
 	c.JSON(code, gin.H{
-		"status":   status,
-		"postgres": dbOK,
-		"time":     time.Now().Format(time.RFC3339),
-		"version":  "2.0.0",
+		"status": status, "postgres": dbOK,
+		"time": time.Now().Format(time.RFC3339), "version": "2.1.0",
 	})
 }
 
-// ── Дополнительные утилиты ───────────────────────────────────────────
-
-// parseDays извлекает количество дней из строки периода ("7d" → 7, "30d" → 30 и т.д.)
 func parseDays(period string) int {
 	switch period {
-	case "today":
-		return 1
-	case "yesterday":
+	case "today", "yesterday":
 		return 1
 	case "7d":
 		return 7
@@ -152,15 +164,4 @@ func parseDays(period string) int {
 	default:
 		return 30
 	}
-}
-
-// pctChange — процентное изменение от previous к current
-func pctChange(current, previous float64) float64 {
-	if previous == 0 {
-		if current > 0 {
-			return 100
-		}
-		return 0
-	}
-	return round2((current - previous) / previous * 100)
 }

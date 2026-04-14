@@ -13,7 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"sportdata-api/internal/crypto"
+	"sportdata/api-gateway/internal/crypto"
 )
 
 func (h *Handler) GetSyncStatus(c *gin.Context) {

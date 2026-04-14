@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
-	"sportdata-api/internal/middleware"
+	"sportdata/api-gateway/internal/middleware"
 )
 
 type LoginRequest struct {

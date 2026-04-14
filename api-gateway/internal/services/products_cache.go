@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"sportdata-api/internal/cache"
+	"sportdata/api-gateway/internal/cache"
 
 	"github.com/redis/go-redis/v9"
 )

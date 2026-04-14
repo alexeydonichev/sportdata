@@ -1,587 +1,188 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 func (h *Handler) GetProducts(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
-	defer cancel()
-
-	categorySlug := c.Query("category")
-	marketplaceSlug := c.Query("marketplace")
+	ctx := c.Request.Context()
+	period := c.DefaultQuery("period", "7d")
+	catSlug := c.Query("category")
+	mpSlug := c.Query("marketplace")
 	search := c.Query("search")
 	sortBy := c.DefaultQuery("sort", "revenue")
-	// FIX #2: фронт шлёт "order", Go читал "dir"
-	sortDir := c.DefaultQuery("order", c.DefaultQuery("dir", "desc"))
-	if sortDir != "asc" {
-		sortDir = "desc"
+	order := c.DefaultQuery("order", "desc")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+	if page < 1 { page = 1 }
+	if limit < 1 || limit > 100 { limit = 20 }
+	offset := (page - 1) * limit
+
+	dateFrom, dateTo := h.parsePeriod(period)
+	prevFrom, prevTo := prevPeriod(dateFrom, dateTo)
+
+	allowed := map[string]string{
+		"revenue": "revenue", "profit": "profit",
+		"quantity": "quantity", "name": "p.name",
+		"margin": "margin", "orders": "orders",
 	}
+	col, ok := allowed[sortBy]
+	if !ok { col = "revenue" }
+	if order != "asc" { order = "desc" }
 
-	period := c.DefaultQuery("period", "90d")
-	dateFrom, dateTo := parsePeriod(period)
-
-	conditions := []string{"p.is_active = true"}
-	args := []any{dateFrom, dateTo}
-	argN := 3
-
-	if categorySlug != "" && categorySlug != "all" {
-		conditions = append(conditions, fmt.Sprintf("c.slug = $%d", argN))
-		args = append(args, categorySlug)
-		argN++
-	}
-	if marketplaceSlug != "" && marketplaceSlug != "all" {
-		conditions = append(conditions, fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM sales sf WHERE sf.product_id = p.id AND sf.marketplace_id = (SELECT id FROM marketplaces WHERE slug = $%d LIMIT 1))", argN))
-		args = append(args, marketplaceSlug)
-		argN++
-	}
-	if search != "" {
-		conditions = append(conditions, fmt.Sprintf("(p.name ILIKE $%d OR p.sku ILIKE $%d)", argN, argN))
-		args = append(args, "%"+search+"%")
-		argN++
-	}
-
-	where := strings.Join(conditions, " AND ")
-
-	orderField := "COALESCE(metrics.revenue, 0)"
-	switch sortBy {
-	case "name":
-		orderField = "p.name"
-	case "sku":
-		orderField = "p.sku"
-	case "profit":
-		orderField = "COALESCE(metrics.profit, 0)"
-	case "quantity":
-		orderField = "COALESCE(metrics.quantity, 0)"
-	case "stock":
-		orderField = "COALESCE(inv.stock, 0)"
-	case "margin":
-		orderField = "CASE WHEN COALESCE(metrics.revenue,0) > 0 THEN COALESCE(metrics.profit,0) / metrics.revenue ELSE 0 END"
-	case "price":
-		orderField = "CASE WHEN COALESCE(metrics.quantity,0) > 0 THEN COALESCE(metrics.revenue,0) / metrics.quantity ELSE 0 END"
-	case "cost_price":
-		orderField = "COALESCE(p.cost_price, 0)"
-	}
-
-	// FIX #1: No pagination — return all as array (фронт не использует пагинацию)
-	q := fmt.Sprintf(`
-		SELECT
-			p.id, p.sku, p.name, COALESCE(p.brand, '') as brand,
-			COALESCE(c.name, '') as category, COALESCE(c.slug, '') as category_slug,
-			COALESCE(p.cost_price, 0) as cost_price,
-			p.is_active, p.created_at,
-			COALESCE(metrics.revenue, 0) as revenue,
-			COALESCE(metrics.profit, 0) as profit,
-			COALESCE(metrics.quantity, 0) as quantity,
-			COALESCE(metrics.orders_count, 0) as orders_count,
-			COALESCE(metrics.commission, 0) as commission,
-			COALESCE(metrics.logistics, 0) as logistics,
-			COALESCE(metrics.returns_qty, 0) as returns_qty,
-			COALESCE(inv.stock, 0) as stock,
-			COALESCE(inv.warehouse, '') as warehouse
-		FROM products p
+	j := ` FROM sales s
+		LEFT JOIN products p ON p.id = s.product_id
 		LEFT JOIN categories c ON c.id = p.category_id
-		LEFT JOIN (
-			SELECT s.product_id,
-				SUM(CASE WHEN s.quantity > 0 THEN s.revenue ELSE 0 END) as revenue,
-				SUM(s.net_profit) as profit,
-				SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END) as quantity,
-				COUNT(CASE WHEN s.quantity > 0 THEN 1 END) as orders_count,
-				SUM(COALESCE(s.commission, 0)) as commission,
-				SUM(COALESCE(s.logistics_cost, 0)) as logistics,
-				SUM(CASE WHEN s.quantity < 0 THEN ABS(s.quantity) ELSE 0 END) as returns_qty
-			FROM sales s
-			WHERE s.sale_date >= $1 AND s.sale_date <= $2
-			GROUP BY s.product_id
-		) metrics ON metrics.product_id = p.id
-		LEFT JOIN (
-			SELECT DISTINCT ON (product_id) product_id, quantity as stock, warehouse
-			FROM inventory ORDER BY product_id, recorded_at DESC
-		) inv ON inv.product_id = p.id
-		WHERE %s
-		ORDER BY %s %s NULLS LAST
-		LIMIT 2000
-	`, where, orderField, sortDir)
+		LEFT JOIN marketplaces m ON m.id = s.marketplace_id`
 
-	rows, err := h.db.Query(ctx, q, args...)
+	w, a := buildSalesWhere(dateFrom, dateTo, catSlug, mpSlug)
+	if search != "" {
+		w += fmt.Sprintf(" AND (p.name ILIKE $%d OR p.sku ILIKE $%d)", len(a)+1, len(a)+1)
+		a = append(a, "%"+search+"%")
+	}
+
+	var total int
+	cntQ := fmt.Sprintf("SELECT COUNT(DISTINCT p.id) %s %s", j, w)
+	h.db.QueryRow(ctx, cntQ, a...).Scan(&total)
+
+	q := fmt.Sprintf(`SELECT p.id, p.sku, p.name,
+		COALESCE(SUM(s.revenue),0) as revenue,
+		COALESCE(SUM(s.net_profit),0) as profit,
+		COALESCE(SUM(s.quantity),0) as quantity,
+		COUNT(*) as orders,
+		CASE WHEN SUM(s.revenue)>0 THEN SUM(s.net_profit)/SUM(s.revenue)*100 ELSE 0 END as margin
+		%s %s
+		GROUP BY p.id, p.sku, p.name
+		ORDER BY %s %s NULLS LAST
+		LIMIT %d OFFSET %d`, j, w, col, order, limit, offset)
+
+	rows, err := h.db.Query(ctx, q, a...)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "db error: " + err.Error()})
+		c.JSON(500, gin.H{"error": "db error", "detail": err.Error()})
 		return
 	}
 	defer rows.Close()
 
-	// FIX #1+3: Return Product[] directly with return_pct
+	pw, pa := buildSalesWhere(prevFrom, prevTo, catSlug, mpSlug)
+	prevMap := map[int]gin.H{}
+	pq := fmt.Sprintf(`SELECT p.id,
+		COALESCE(SUM(s.revenue),0), COALESCE(SUM(s.net_profit),0),
+		COALESCE(SUM(s.quantity),0)
+		%s %s GROUP BY p.id`, j, pw)
+	prows, perr := h.db.Query(ctx, pq, pa...)
+	if perr == nil {
+		defer prows.Close()
+		for prows.Next() {
+			var pid int
+			var pr, pp float64
+			var pqt int
+			if prows.Scan(&pid, &pr, &pp, &pqt) == nil {
+				prevMap[pid] = gin.H{"revenue": pr, "profit": pp, "quantity": pqt}
+			}
+		}
+	}
+
 	var items []gin.H
 	for rows.Next() {
 		var id int
-		var sku, name, brand, category, categorySlugVal, warehouse string
-		var costPrice, revenue, profit, commission, logistics float64
-		var quantity, ordersCount, returnsQty, stock int
-		var isActive bool
-		var createdAt time.Time
-
-		if err := rows.Scan(&id, &sku, &name, &brand, &category, &categorySlugVal,
-			&costPrice, &isActive, &createdAt,
-			&revenue, &profit, &quantity, &ordersCount, &commission, &logistics,
-			&returnsQty, &stock, &warehouse); err != nil {
+		var sku, name string
+		var rev, prof, marg float64
+		var qty, ord int
+		if rows.Scan(&id, &sku, &name, &rev, &prof, &qty, &ord, &marg) != nil {
 			continue
 		}
-
-		marginPct := pct(profit, revenue)
-		avgPrice := div(revenue, float64(quantity))
-		// FIX #3: return_pct
-		returnPct := 0.0
-		if quantity+returnsQty > 0 {
-			returnPct = float64(returnsQty) / float64(quantity+returnsQty) * 100
+		item := gin.H{
+			"product_id": id, "sku": sku, "name": name,
+			"revenue": round2(rev), "profit": round2(prof),
+			"quantity": qty, "orders": ord,
+			"margin_pct": round2(marg),
 		}
-
-		items = append(items, gin.H{
-			"id": id, "sku": sku, "name": name, "brand": brand,
-			"category": category, "category_slug": categorySlugVal,
-			"cost_price": round2(costPrice), "is_active": isActive,
-			"created_at": createdAt.Format("2006-01-02"),
-			"revenue":    round2(revenue), "profit": round2(profit),
-			"quantity": quantity, "orders": ordersCount,
-			"commission": round2(commission), "logistics": round2(logistics),
-			"returns": returnsQty, "return_pct": round2(returnPct),
-			"stock": stock, "warehouse": warehouse,
-			"margin_pct": round2(marginPct), "avg_price": round2(avgPrice),
-		})
-	}
-	if items == nil {
-		items = []gin.H{}
-	}
-
-	// FIX #1: Return array directly, not {items: [...]}
-	c.JSON(200, items)
-}
-
-func (h *Handler) GetProductDetail(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	idStr := c.Param("id")
-	productID, err := strconv.Atoi(idStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "невалидный ID"})
-		return
-	}
-
-	period := c.DefaultQuery("period", "90d")
-	dateFromStr, dateToStr := parsePeriod(period)
-	dateFrom, _ := time.Parse("2006-01-02", dateFromStr)
-	dateTo, _ := time.Parse("2006-01-02", dateToStr)
-
-	// Basic product info
-	var id int
-	var sku, name string
-	var brand, barcode *string
-	var categoryName, categorySlug string
-	var costPrice float64
-	var weightG *int
-	var isActive bool
-	var createdAt time.Time
-
-	err = h.db.QueryRow(ctx, `
-		SELECT p.id, p.sku, p.name, p.brand, p.barcode,
-			COALESCE(c.name,''), COALESCE(c.slug,''),
-			COALESCE(p.cost_price,0), p.weight_g, p.is_active, p.created_at
-		FROM products p
-		LEFT JOIN categories c ON c.id = p.category_id
-		WHERE p.id = $1
-	`, productID).Scan(&id, &sku, &name, &brand, &barcode, &categoryName, &categorySlug,
-		&costPrice, &weightG, &isActive, &createdAt)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "товар не найден"})
-		return
-	}
-
-	// Sales metrics
-	var revenue, profit, commission, logistics float64
-	var quantity, ordersCount, returnsQty int
-	h.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END),0),
-			COALESCE(SUM(net_profit),0),
-			COALESCE(SUM(commission),0),
-			COALESCE(SUM(logistics_cost),0),
-			COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END),0),
-			COUNT(CASE WHEN quantity > 0 THEN 1 END),
-			COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END),0)
-		FROM sales WHERE product_id = $1 AND sale_date >= $2 AND sale_date <= $3
-	`, productID, dateFrom, dateTo).Scan(&revenue, &profit, &commission, &logistics,
-		&quantity, &ordersCount, &returnsQty)
-
-	// Previous period for changes
-	prevFrom, prevTo := prevPeriod(dateFromStr, dateToStr)
-	var prevRevenue, prevProfit float64
-	var prevQuantity, prevOrders int
-	h.db.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END),0),
-			COALESCE(SUM(net_profit),0),
-			COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END),0),
-			COUNT(CASE WHEN quantity > 0 THEN 1 END)
-		FROM sales WHERE product_id = $1 AND sale_date >= $2 AND sale_date <= $3
-	`, productID, prevFrom, prevTo).Scan(&prevRevenue, &prevProfit, &prevQuantity, &prevOrders)
-
-	// Daily chart
-	chartRows, _ := h.db.Query(ctx, `
-		SELECT sale_date,
-			COALESCE(SUM(CASE WHEN quantity > 0 THEN revenue ELSE 0 END),0),
-			COALESCE(SUM(net_profit),0),
-			COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END),0)
-		FROM sales WHERE product_id = $1 AND sale_date >= $2 AND sale_date <= $3
-		GROUP BY sale_date ORDER BY sale_date
-	`, productID, dateFrom, dateTo)
-	var chart []gin.H
-	if chartRows != nil {
-		defer chartRows.Close()
-		for chartRows.Next() {
-			var d time.Time
-			var r, p float64
-			var q int
-			if err := chartRows.Scan(&d, &r, &p, &q); err != nil {
-				continue
+		if prev, ok := prevMap[id]; ok {
+			pr := prev["revenue"].(float64)
+			pp := prev["profit"].(float64)
+			pq := prev["quantity"].(int)
+			item["changes"] = gin.H{
+				"revenue":  changePct(rev, pr),
+				"profit":   changePct(prof, pp),
+				"quantity": changePct(float64(qty), float64(pq)),
 			}
-			chart = append(chart, gin.H{
-				"date": d.Format("2006-01-02"), "revenue": round2(r),
-				"profit": round2(p), "quantity": q,
-			})
 		}
+		items = append(items, item)
 	}
-	if chart == nil {
-		chart = []gin.H{}
-	}
+	if items == nil { items = []gin.H{} }
 
-	// Marketplace breakdown
-	mpRows, _ := h.db.Query(ctx, `
-		SELECT m.slug, m.name,
-			COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue ELSE 0 END),0),
-			COALESCE(SUM(s.net_profit),0),
-			COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.quantity ELSE 0 END),0)
-		FROM sales s
-		JOIN marketplaces m ON m.id = s.marketplace_id
-		WHERE s.product_id = $1 AND s.sale_date >= $2 AND s.sale_date <= $3
-		GROUP BY m.slug, m.name ORDER BY SUM(s.revenue) DESC
-	`, productID, dateFrom, dateTo)
-	var marketplaces []gin.H
-	if mpRows != nil {
-		defer mpRows.Close()
-		for mpRows.Next() {
-			var slug, mname string
-			var rev, prof float64
-			var qty int
-			if err := mpRows.Scan(&slug, &mname, &rev, &prof, &qty); err != nil {
-				continue
-			}
-			marketplaces = append(marketplaces, gin.H{
-				"marketplace": slug, "name": mname,
-				"revenue": round2(rev), "profit": round2(prof), "quantity": qty,
-			})
-		}
-	}
-	if marketplaces == nil {
-		marketplaces = []gin.H{}
-	}
-
-	// Inventory
-	var totalStock int
-	invRows, _ := h.db.Query(ctx, `
-		SELECT COALESCE(warehouse, 'Основной'), COALESCE(quantity, 0)
-		FROM inventory WHERE product_id = $1 ORDER BY recorded_at DESC
-	`, productID)
-	var invItems []gin.H
-	if invRows != nil {
-		defer invRows.Close()
-		seen := map[string]bool{}
-		for invRows.Next() {
-			var wh string
-			var qty int
-			if err := invRows.Scan(&wh, &qty); err != nil {
-				continue
-			}
-			if seen[wh] {
-				continue
-			}
-			seen[wh] = true
-			totalStock += qty
-			invItems = append(invItems, gin.H{"warehouse": wh, "stock": qty})
-		}
-	}
-	if invItems == nil {
-		invItems = []gin.H{}
-	}
-
-	// Computed fields
-	avgPrice := div(revenue, float64(quantity))
-	marginPct := pct(profit, revenue)
-	returnPct := 0.0
-	if quantity+returnsQty > 0 {
-		returnPct = float64(returnsQty) / float64(quantity+returnsQty) * 100
-	}
-
-	// Days of stock
-	days := dateTo.Sub(dateFrom).Hours() / 24
-	if days < 1 {
-		days = 1
-	}
-	avgDailySales := float64(quantity) / days
-	daysOfStock := 0.0
-	if avgDailySales > 0 {
-		daysOfStock = float64(totalStock) / avgDailySales
-	}
-
-	brandStr := ""
-	if brand != nil {
-		brandStr = *brand
-	}
-	barcodeStr := ""
-	if barcode != nil {
-		barcodeStr = *barcode
-	}
-
-	// FIX #4: структура как ждёт фронт ProductDetail
-	result := gin.H{
-		"product": gin.H{
-			"id": id, "sku": sku, "name": name, "brand": brandStr, "barcode": barcodeStr,
-			"category": categoryName, "category_slug": categorySlug,
-			"cost_price": round2(costPrice), "retail_price": round2(avgPrice),
-			"discount_price": round2(avgPrice),
-			"is_active":  isActive,
-			"created_at": createdAt.Format("2006-01-02"),
-			"weight_g":   weightG,
-		},
-		"metrics": gin.H{
-			"total_revenue":    round2(revenue),
-			"total_profit":     round2(profit),
-			"total_sold":       quantity,
-			"total_orders":     ordersCount,
-			"avg_price":        round2(avgPrice),
-			"total_commission": round2(commission),
-			"total_logistics":  round2(logistics),
-			"total_returns":    returnsQty,
-			"margin_pct":       round2(marginPct),
-			"return_pct":       round2(returnPct),
-		},
-		"changes": gin.H{
-			"revenue":  changePctPtr(revenue, prevRevenue),
-			"profit":   changePctPtr(profit, prevProfit),
-			"quantity": changePctPtr(float64(quantity), float64(prevQuantity)),
-			"orders":   changePctPtr(float64(ordersCount), float64(prevOrders)),
-		},
-		"chart": chart,
-		"finance": gin.H{
-			"revenue":            round2(revenue),
-			"commission":         round2(commission),
-			"logistics":          round2(logistics),
-			"cogs":               round2(costPrice * float64(quantity)),
-			"net_profit":         round2(profit),
-			"for_pay":            round2(revenue - commission),
-			"penalty":            0, "acquiring": 0, "storage": 0,
-			"deduction": 0, "acceptance": 0, "return_logistics": 0,
-			"additional_payment": 0, "returns_amount": 0,
-			"avg_spp_pct": 0, "avg_commission_pct": pct(commission, revenue),
-		},
-		"inventory": gin.H{
-			"total_stock":     totalStock,
-			"avg_daily_sales": round2(avgDailySales),
-			"days_of_stock":   math.Round(daysOfStock),
-			"items":           invItems,
-		},
-		"by_marketplace": marketplaces,
-		"period":          gin.H{"from": dateFrom.Format("2006-01-02"), "to": dateTo.Format("2006-01-02")},
-	}
-
-	c.JSON(200, result)
-}
-
-// changePctPtr returns *float64 (nil if prev is 0)
-func changePctPtr(current, prev float64) *float64 {
-	if prev == 0 {
-		return nil
-	}
-	v := round2((current - prev) / prev * 100)
-	return &v
-}
-
-func (h *Handler) UpdateProduct(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
-	defer cancel()
-
-	idStr := c.Param("id")
-	productID, err := strconv.Atoi(idStr)
-	if err != nil {
-		c.JSON(400, gin.H{"error": "невалидный ID"})
-		return
-	}
-
-	var req struct {
-		Name      *string  `json:"name"`
-		Brand     *string  `json:"brand"`
-		CostPrice *float64 `json:"cost_price"`
-		IsActive  *bool    `json:"is_active"`
-		Barcode   *string  `json:"barcode"`
-		WeightG   *int     `json:"weight_g"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "невалидные данные"})
-		return
-	}
-
-	sets := []string{}
-	args := []any{}
-	argN := 1
-
-	if req.Name != nil {
-		sets = append(sets, fmt.Sprintf("name = $%d", argN))
-		args = append(args, *req.Name)
-		argN++
-	}
-	if req.Brand != nil {
-		sets = append(sets, fmt.Sprintf("brand = $%d", argN))
-		args = append(args, *req.Brand)
-		argN++
-	}
-	if req.CostPrice != nil {
-		sets = append(sets, fmt.Sprintf("cost_price = $%d", argN))
-		args = append(args, *req.CostPrice)
-		argN++
-	}
-	if req.IsActive != nil {
-		sets = append(sets, fmt.Sprintf("is_active = $%d", argN))
-		args = append(args, *req.IsActive)
-		argN++
-	}
-	if req.Barcode != nil {
-		sets = append(sets, fmt.Sprintf("barcode = $%d", argN))
-		args = append(args, *req.Barcode)
-		argN++
-	}
-	if req.WeightG != nil {
-		sets = append(sets, fmt.Sprintf("weight_g = $%d", argN))
-		args = append(args, *req.WeightG)
-		argN++
-	}
-
-	if len(sets) == 0 {
-		c.JSON(400, gin.H{"error": "нет полей для обновления"})
-		return
-	}
-
-	sets = append(sets, "updated_at = NOW()")
-	args = append(args, productID)
-
-	q := fmt.Sprintf("UPDATE products SET %s WHERE id = $%d RETURNING id, sku, name, COALESCE(cost_price,0)", strings.Join(sets, ", "), argN)
-	var updatedID int
-	var updSku, updName string
-	var updCost float64
-	err = h.db.QueryRow(ctx, q, args...).Scan(&updatedID, &updSku, &updName, &updCost)
-	if err != nil {
-		c.JSON(404, gin.H{"error": "товар не найден"})
-		return
-	}
-
-	userID, _ := c.Get("user_id")
-	h.auditLog(ctx, userID, "product_updated", "product", idStr, "{}", c.ClientIP())
-
-	// FIX: фронт ждёт { product: { id, name, sku, cost_price } }
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
 	c.JSON(200, gin.H{
-		"product": gin.H{
-			"id": fmt.Sprintf("%d", updatedID), "name": updName,
-			"sku": updSku, "cost_price": round2(updCost),
-		},
+		"items": items, "total": total, "page": page,
+		"limit": limit, "total_pages": totalPages,
 	})
 }
 
-func (h *Handler) BulkUpdateCostPrice(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-
-	var req struct {
-		Items []struct {
-			ID        *int     `json:"id"`
-			SKU       *string  `json:"sku"`
-			ProductID int      `json:"product_id"`
-			CostPrice float64  `json:"cost_price"`
-		} `json:"items"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": "невалидные данные"})
-		return
-	}
-
-	if len(req.Items) == 0 {
-		c.JSON(400, gin.H{"error": "пустой список"})
-		return
-	}
-	if len(req.Items) > 500 {
-		c.JSON(400, gin.H{"error": "максимум 500 позиций"})
-		return
-	}
-
-	tx, err := h.db.Begin(ctx)
+func (h *Handler) GetProduct(c *gin.Context) {
+	ctx := c.Request.Context()
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "transaction error"})
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	updated := 0
-	var errors []string
-	for _, item := range req.Items {
-		if item.CostPrice < 0 {
-			errors = append(errors, fmt.Sprintf("product %d: отрицательная себестоимость", item.ProductID))
-			continue
-		}
-		// Support id or sku or product_id
-		pid := item.ProductID
-		if item.ID != nil {
-			pid = *item.ID
-		}
-		if pid > 0 {
-			tag, err := tx.Exec(ctx,
-				"UPDATE products SET cost_price = $1, updated_at = NOW() WHERE id = $2 AND is_active = true",
-				item.CostPrice, pid)
-			if err != nil {
-				errors = append(errors, fmt.Sprintf("product %d: %s", pid, err.Error()))
-				continue
-			}
-			if tag.RowsAffected() > 0 {
-				updated++
-			}
-		} else if item.SKU != nil && *item.SKU != "" {
-			tag, err := tx.Exec(ctx,
-				"UPDATE products SET cost_price = $1, updated_at = NOW() WHERE sku = $2 AND is_active = true",
-				item.CostPrice, *item.SKU)
-			if err != nil {
-				errors = append(errors, fmt.Sprintf("sku %s: %s", *item.SKU, err.Error()))
-				continue
-			}
-			if tag.RowsAffected() > 0 {
-				updated++
-			}
-		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		c.JSON(500, gin.H{"error": "commit error"})
+		c.JSON(400, gin.H{"error": "invalid id"})
 		return
 	}
 
-	userID, _ := c.Get("user_id")
-	h.auditLog(ctx, userID, "bulk_cost_update", "products", "",
-		fmt.Sprintf(`{"updated":%d,"total":%d}`, updated, len(req.Items)), c.ClientIP())
-
-	// FIX: фронт ждёт { updated: number, errors: string[] }
-	if errors == nil {
-		errors = []string{}
+	var sku, name string
+	var catName *string
+	var catID *int
+	var isActive bool
+	var costPrice *float64
+	err = h.db.QueryRow(ctx, `SELECT p.id, p.sku, p.name,
+		c.name, c.id, p.cost_price, p.is_active
+		FROM products p
+		LEFT JOIN categories c ON c.id = p.category_id
+		WHERE p.id = $1`, id).Scan(&id, &sku, &name,
+		&catName, &catID, &costPrice, &isActive)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "product not found"})
+		return
 	}
-	c.JSON(200, gin.H{"updated": updated, "errors": errors})
+
+	var detectedMP *string
+	var detectedMPID *int
+	h.db.QueryRow(ctx, `SELECT m.name, m.id FROM sales s
+		JOIN marketplaces m ON m.id = s.marketplace_id
+		WHERE s.product_id = $1 LIMIT 1`, id).Scan(&detectedMP, &detectedMPID)
+
+	period := c.DefaultQuery("period", "30d")
+	dateFrom, dateTo := h.parsePeriod(period)
+
+	var rev, prof, comm, logi float64
+	var qty, orders int
+	h.db.QueryRow(ctx, `SELECT COALESCE(SUM(revenue),0),
+		COALESCE(SUM(net_profit),0), COALESCE(SUM(commission),0),
+		COALESCE(SUM(logistics_cost),0), COALESCE(SUM(quantity),0), COUNT(*)
+		FROM sales WHERE product_id=$1 AND sale_date>=$2 AND sale_date<=$3`,
+		id, dateFrom, dateTo).Scan(&rev, &prof, &comm, &logi, &qty, &orders)
+
+	catNameStr := ""
+	catIDVal := 0
+	mpNameStr := ""
+	mpIDVal := 0
+	costPriceVal := 0.0
+	if catName != nil { catNameStr = *catName }
+	if catID != nil { catIDVal = *catID }
+	if detectedMP != nil { mpNameStr = *detectedMP }
+	if detectedMPID != nil { mpIDVal = *detectedMPID }
+	if costPrice != nil { costPriceVal = *costPrice }
+
+	c.JSON(200, gin.H{
+		"product_id": id, "sku": sku, "name": name,
+		"category": catNameStr, "category_id": catIDVal,
+		"marketplace": mpNameStr, "marketplace_id": mpIDVal,
+		"is_active": isActive, "cost_price": round2(costPriceVal),
+		"revenue": round2(rev), "profit": round2(prof),
+		"commission": round2(comm), "logistics": round2(logi),
+		"quantity": qty, "orders": orders,
+		"margin_pct": round2(pct(prof, rev)),
+	})
 }

@@ -7,359 +7,181 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (h *Handler) GetPnL(c *gin.Context) {
+func (h *Handler) GetAnalytics(c *gin.Context) {
 	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "30d")
-	categorySlug := c.Query("category")
-	marketplaceSlug := c.Query("marketplace")
-	dateFrom, dateTo := parsePeriod(period)
-	prevFrom, prevTo := prevPeriod(dateFrom, dateTo)
+	catSlug := c.Query("category")
+	mpSlug := c.Query("marketplace")
+	dateFrom, dateTo := h.parsePeriod(period)
 
-	joinClause := `FROM sales s
+	w, a := buildSalesWhere(dateFrom, dateTo, catSlug, mpSlug)
+
+	j := ` FROM sales s
 		LEFT JOIN products p ON p.id = s.product_id
 		LEFT JOIN categories c ON c.id = p.category_id
 		LEFT JOIN marketplaces m ON m.id = s.marketplace_id`
 
-	whereClause, args := buildSalesWhere(dateFrom, dateTo, categorySlug, marketplaceSlug)
-	prevWhere, prevArgs := buildSalesWherePrev(prevFrom, prevTo, categorySlug, marketplaceSlug)
-
-	var revenue, costOfGoods, commission, logistics, profit float64
-	var quantity int
-	q := fmt.Sprintf(`
-		SELECT COALESCE(SUM(s.revenue),0),
-			COALESCE(SUM(s.quantity * COALESCE(p.cost_price,0)),0),
-			COALESCE(SUM(s.commission),0),
-			COALESCE(SUM(s.logistics_cost),0),
-			COALESCE(SUM(s.net_profit),0),
-			COALESCE(SUM(s.quantity),0)
-		%s %s`, joinClause, whereClause)
-	h.db.QueryRow(ctx, q, args...).Scan(&revenue, &costOfGoods, &commission, &logistics, &profit, &quantity)
-
-	var returnsAmount float64
-	var unitsReturned int
-	rq := fmt.Sprintf(`
-		SELECT COALESCE(SUM(ABS(s.revenue)),0), COALESCE(SUM(ABS(s.quantity)),0)
-		%s %s AND s.quantity < 0`, joinClause, whereClause)
-	h.db.QueryRow(ctx, rq, args...).Scan(&returnsAmount, &unitsReturned)
-
-	var activeSkus int
-	sq := fmt.Sprintf(`
-		SELECT COUNT(DISTINCT s.product_id)
-		%s %s AND s.quantity > 0`, joinClause, whereClause)
-	h.db.QueryRow(ctx, sq, args...).Scan(&activeSkus)
-
-	var prevRevenue, prevProfit, prevCogs, prevCommission, prevLogistics float64
-	var prevQuantity int
-	pq := fmt.Sprintf(`
-		SELECT COALESCE(SUM(s.revenue),0), COALESCE(SUM(s.net_profit),0),
-			COALESCE(SUM(s.quantity * COALESCE(p.cost_price,0)),0),
-			COALESCE(SUM(s.commission),0), COALESCE(SUM(s.logistics_cost),0),
-			COALESCE(SUM(s.quantity),0)
-		%s %s`, joinClause, prevWhere)
-	h.db.QueryRow(ctx, pq, prevArgs...).Scan(&prevRevenue, &prevProfit, &prevCogs, &prevCommission, &prevLogistics, &prevQuantity)
-
-	grossRevenue := revenue
-	netRevenue := revenue - returnsAmount
-	grossProfit := netRevenue - costOfGoods
-	operatingExpenses := commission + logistics
-	operatingProfit := grossProfit - operatingExpenses
-	netProfit := profit
-
-	grossMargin := pct(grossProfit, netRevenue)
-	operatingMargin := pct(operatingProfit, netRevenue)
-	netMargin := pct(netProfit, grossRevenue)
-	returnRate := pct(returnsAmount, grossRevenue)
-
-	avgCheck := div(grossRevenue, float64(quantity))
-	avgProfitPerUnit := div(netProfit, float64(quantity))
-
-	prevNetRevenue := prevRevenue
-	prevGrossProfit := prevNetRevenue - prevCogs
-	prevOperatingProfit := prevGrossProfit - prevCommission - prevLogistics
-
-	catQ := fmt.Sprintf(`
-		SELECT COALESCE(c.name, 'Без категории'),
-			COALESCE(c.slug, ''),
-			COALESCE(SUM(s.revenue),0),
-			COALESCE(SUM(s.net_profit),0),
-			COALESCE(SUM(s.quantity),0),
-			COALESCE(SUM(s.commission),0),
-			COALESCE(SUM(s.logistics_cost),0),
-			COALESCE(SUM(s.quantity * COALESCE(p.cost_price,0)),0)
-		%s %s
-		GROUP BY c.name, c.slug ORDER BY SUM(s.revenue) DESC`, joinClause, whereClause)
-	catRows, err := h.db.Query(ctx, catQ, args...)
-	var byCategory []gin.H
-	if err == nil {
+	// Revenue by category
+	catRows, _ := h.db.Query(ctx, fmt.Sprintf(`SELECT c.slug, c.name,
+		COALESCE(SUM(s.revenue),0), COALESCE(SUM(s.net_profit),0),
+		COALESCE(SUM(s.quantity),0) %s %s
+		GROUP BY c.slug, c.name ORDER BY SUM(s.revenue) DESC NULLS LAST`, j, w), a...)
+	var byCat []gin.H
+	var totalRev float64
+	if catRows != nil {
 		defer catRows.Close()
+		type catRow struct{ slug, name string; rev, prof float64; qty int }
+		var tmp []catRow
 		for catRows.Next() {
-			var cn, cs string
-			var r, p, comm, logi, cogs float64
-			var qty int
-			if err := catRows.Scan(&cn, &cs, &r, &p, &qty, &comm, &logi, &cogs); err != nil {
-				continue
+			var r catRow
+			if catRows.Scan(&r.slug, &r.name, &r.rev, &r.prof, &r.qty) == nil {
+				tmp = append(tmp, r)
+				totalRev += r.rev
 			}
-			byCategory = append(byCategory, gin.H{
-				"category": cn, "slug": cs,
-				"revenue": round2(r), "profit": round2(p), "units": qty,
-				"commission": round2(comm), "logistics": round2(logi),
-				"cogs": round2(cogs), "margin_pct": round2(pct(p, r)),
+		}
+		for _, r := range tmp {
+			byCat = append(byCat, gin.H{
+				"category": r.slug, "name": r.name,
+				"revenue": round2(r.rev), "profit": round2(r.prof),
+				"quantity": r.qty, "share_pct": round2(pct(r.rev, totalRev)),
 			})
 		}
 	}
-	if byCategory == nil {
-		byCategory = []gin.H{}
-	}
+	if byCat == nil { byCat = []gin.H{} }
 
-	chartQ := fmt.Sprintf(`
-		SELECT s.sale_date,
-			COALESCE(SUM(s.revenue),0),
-			COALESCE(SUM(s.net_profit),0),
-			COALESCE(SUM(s.commission),0),
-			COALESCE(SUM(s.logistics_cost),0),
-			COALESCE(SUM(CASE WHEN s.quantity < 0 THEN ABS(s.revenue) ELSE 0 END),0)
-		%s %s
-		GROUP BY s.sale_date ORDER BY s.sale_date`, joinClause, whereClause)
-	chartRows, err := h.db.Query(ctx, chartQ, args...)
-	var daily []gin.H
-	if err == nil {
-		defer chartRows.Close()
-		for chartRows.Next() {
+	// Revenue by marketplace
+	mpRows, _ := h.db.Query(ctx, fmt.Sprintf(`SELECT m.slug, m.name,
+		COALESCE(SUM(s.revenue),0), COALESCE(SUM(s.net_profit),0),
+		COALESCE(SUM(s.quantity),0) %s %s
+		GROUP BY m.slug, m.name ORDER BY SUM(s.revenue) DESC NULLS LAST`, j, w), a...)
+	var byMP []gin.H
+	if mpRows != nil {
+		defer mpRows.Close()
+		for mpRows.Next() {
+			var sl, nm string
+			var r, p float64
+			var q int
+			if mpRows.Scan(&sl, &nm, &r, &p, &q) == nil {
+				byMP = append(byMP, gin.H{
+					"marketplace": sl, "name": nm,
+					"revenue": round2(r), "profit": round2(p),
+					"quantity": q, "share_pct": round2(pct(r, totalRev)),
+				})
+			}
+		}
+	}
+	if byMP == nil { byMP = []gin.H{} }
+
+	// Daily trend
+	trendRows, _ := h.db.Query(ctx, fmt.Sprintf(`SELECT s.sale_date,
+		COALESCE(SUM(s.revenue),0), COALESCE(SUM(s.net_profit),0),
+		COALESCE(SUM(s.commission),0), COALESCE(SUM(s.logistics_cost),0),
+		COUNT(*), COALESCE(SUM(s.quantity),0)
+		%s %s GROUP BY s.sale_date ORDER BY s.sale_date`, j, w), a...)
+	var trend []gin.H
+	if trendRows != nil {
+		defer trendRows.Close()
+		for trendRows.Next() {
 			var d time.Time
-			var r, p, co, lo, ret float64
-			if err := chartRows.Scan(&d, &r, &p, &co, &lo, &ret); err != nil {
-				continue
+			var r, p, cm, lg float64
+			var o, q int
+			if trendRows.Scan(&d, &r, &p, &cm, &lg, &o, &q) == nil {
+				trend = append(trend, gin.H{
+					"date": d.Format("2006-01-02"),
+					"revenue": round2(r), "profit": round2(p),
+					"commission": round2(cm), "logistics": round2(lg),
+					"orders": o, "quantity": q,
+					"margin_pct": round2(pct(p, r)),
+				})
 			}
-			daily = append(daily, gin.H{
-				"date": d.Format("2006-01-02"), "revenue": round2(r),
-				"profit": round2(p), "commission": round2(co),
-				"logistics": round2(lo), "returns": round2(ret),
-			})
 		}
 	}
-	if daily == nil {
-		daily = []gin.H{}
-	}
+	if trend == nil { trend = []gin.H{} }
 
-	c.JSON(200, gin.H{
-		"period": period, "date_from": dateFrom, "date_to": dateTo,
-		"pnl": gin.H{
-			"gross_revenue": round2(grossRevenue), "returns_amount": round2(returnsAmount),
-			"net_revenue": round2(netRevenue), "cogs": round2(costOfGoods),
-			"gross_profit": round2(grossProfit), "commission": round2(commission),
-			"logistics": round2(logistics), "operating_expenses": round2(operatingExpenses),
-			"operating_profit": round2(operatingProfit), "advertising": 0,
-			"net_profit": round2(netProfit),
-		},
-		"margins": gin.H{
-			"gross_margin": round2(grossMargin), "operating_margin": round2(operatingMargin),
-			"net_margin": round2(netMargin), "return_rate": round2(returnRate),
-		},
-		"metrics": gin.H{
-			"units_sold": quantity, "units_returned": unitsReturned,
-			"active_skus": activeSkus, "avg_check": round2(avgCheck),
-			"avg_profit_per_unit": round2(avgProfitPerUnit),
-		},
-		"changes": gin.H{
-			"gross_revenue": changePct(grossRevenue, prevRevenue),
-			"net_revenue": changePct(netRevenue, prevNetRevenue),
-			"cogs": changePct(costOfGoods, prevCogs),
-			"gross_profit": changePct(grossProfit, prevGrossProfit),
-			"commission": changePct(commission, prevCommission),
-			"logistics": changePct(logistics, prevLogistics),
-			"operating_profit": changePct(operatingProfit, prevOperatingProfit),
-			"net_profit": changePct(netProfit, prevProfit),
-			"revenue": changePct(revenue, prevRevenue),
-			"profit": changePct(profit, prevProfit),
-		},
-		"by_category": byCategory,
-		"daily":       daily,
-	})
-}
+	// Cost breakdown
+	var totRev, totProf, totComm, totLogi, totCost float64
+	bq := fmt.Sprintf(`SELECT COALESCE(SUM(s.revenue),0),
+		COALESCE(SUM(s.net_profit),0), COALESCE(SUM(s.commission),0),
+		COALESCE(SUM(s.logistics_cost),0), COALESCE(SUM(p.cost_price * s.quantity),0)
+		%s %s`, j, w)
+	h.db.QueryRow(ctx, bq, a...).Scan(&totRev, &totProf, &totComm, &totLogi, &totCost)
 
-func (h *Handler) GetABC(c *gin.Context) {
-	ctx := c.Request.Context()
-	period := c.DefaultQuery("period", "90d")
-	categorySlug := c.Query("category")
-	marketplaceSlug := c.Query("marketplace")
-	dateFrom, dateTo := parsePeriod(period)
-
-	whereClause, args := buildSalesWhere(dateFrom, dateTo, categorySlug, marketplaceSlug)
-
-	var totalRevenue float64
-	tq := fmt.Sprintf(`
-		SELECT COALESCE(SUM(s.revenue),0)
-		FROM sales s
-		LEFT JOIN products p ON p.id = s.product_id
-		LEFT JOIN categories c ON c.id = p.category_id
-		LEFT JOIN marketplaces m ON m.id = s.marketplace_id
-		%s`, whereClause)
-	h.db.QueryRow(ctx, tq, args...).Scan(&totalRevenue)
-
-	q := fmt.Sprintf(`
-		SELECT p.id::text, p.name, p.sku, COALESCE(c.name, '') as category,
-			COALESCE(SUM(s.revenue),0), COALESCE(SUM(s.net_profit),0),
-			COALESCE(SUM(s.quantity),0), COUNT(DISTINCT s.id)
-		FROM sales s
-		JOIN products p ON p.id = s.product_id
-		LEFT JOIN categories c ON c.id = p.category_id
-		LEFT JOIN marketplaces m ON m.id = s.marketplace_id
-		%s
-		GROUP BY p.id, p.name, p.sku, c.name
-		ORDER BY SUM(s.revenue) DESC`, whereClause)
-
-	rows, err := h.db.Query(ctx, q, args...)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "db error: " + err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	var products []gin.H
-	cumShare := 0.0
-	var groupA, groupB, groupC []gin.H
-	var revenueA, revenueB, revenueC float64
-
-	for rows.Next() {
-		var id, name, sku, cat string
-		var rev, prof float64
-		var qty, orders int
-		if err := rows.Scan(&id, &name, &sku, &cat, &rev, &prof, &qty, &orders); err != nil {
-			continue
-		}
-		share := pct(rev, totalRevenue)
-		cumShare += share
-
-		grade := "C"
-		if cumShare <= 80 {
-			grade = "A"
-			revenueA += rev
-		} else if cumShare <= 95 {
-			grade = "B"
-			revenueB += rev
-		} else {
-			revenueC += rev
-		}
-
-		item := gin.H{
-			"id": id, "name": name, "sku": sku, "category": cat,
-			"revenue": round2(rev), "profit": round2(prof),
-			"quantity": qty, "orders": orders,
-			"share_pct": round2(share), "cumulative_pct": round2(cumShare),
-			"grade": grade,
-		}
-		products = append(products, item)
-
-		switch grade {
-		case "A":
-			groupA = append(groupA, item)
-		case "B":
-			groupB = append(groupB, item)
-		case "C":
-			groupC = append(groupC, item)
-		}
-	}
-	if products == nil {
-		products = []gin.H{}
+	costs := gin.H{
+		"total_revenue": round2(totRev),
+		"cost_price": round2(totCost), "cost_price_pct": round2(pct(totCost, totRev)),
+		"commission": round2(totComm), "commission_pct": round2(pct(totComm, totRev)),
+		"logistics": round2(totLogi), "logistics_pct": round2(pct(totLogi, totRev)),
+		"profit": round2(totProf), "profit_pct": round2(pct(totProf, totRev)),
 	}
 
 	c.JSON(200, gin.H{
 		"period": period, "date_from": dateFrom, "date_to": dateTo,
-		"total_revenue": round2(totalRevenue),
-		"products":      products,
-		"summary": gin.H{
-			"A": gin.H{"count": len(groupA), "revenue": round2(revenueA), "share_pct": round2(pct(revenueA, totalRevenue))},
-			"B": gin.H{"count": len(groupB), "revenue": round2(revenueB), "share_pct": round2(pct(revenueB, totalRevenue))},
-			"C": gin.H{"count": len(groupC), "revenue": round2(revenueC), "share_pct": round2(pct(revenueC, totalRevenue))},
-		},
+		"by_category": byCat, "by_marketplace": byMP,
+		"daily_trend": trend, "cost_breakdown": costs,
 	})
 }
 
-func (h *Handler) GetUnitEconomics(c *gin.Context) {
+func (h *Handler) GetAnalyticsABC(c *gin.Context) {
 	ctx := c.Request.Context()
 	period := c.DefaultQuery("period", "30d")
-	categorySlug := c.Query("category")
-	marketplaceSlug := c.Query("marketplace")
-	dateFrom, dateTo := parsePeriod(period)
+	dateFrom, dateTo := h.parsePeriod(period)
 
-	whereClause, args := buildSalesWhere(dateFrom, dateTo, categorySlug, marketplaceSlug)
-
-	q := fmt.Sprintf(`
-		SELECT p.id::text, p.name, p.sku, COALESCE(c.name,'') as category,
-			COALESCE(p.cost_price, 0) as cost_price,
-			COALESCE(AVG(s.revenue / NULLIF(s.quantity, 0)), 0) as avg_price,
-			COALESCE(SUM(s.revenue), 0) as revenue,
-			COALESCE(SUM(s.net_profit), 0) as profit,
-			COALESCE(SUM(s.quantity), 0) as quantity,
-			COALESCE(SUM(s.commission), 0) as commission,
-			COALESCE(SUM(s.logistics_cost), 0) as logistics,
-			COALESCE(SUM(s.quantity * COALESCE(p.cost_price, 0)), 0) as total_cost
+	rows, err := h.db.Query(ctx, `SELECT p.id, p.sku, p.name,
+		COALESCE(SUM(s.revenue),0) as rev,
+		COALESCE(SUM(s.net_profit),0) as prof,
+		COALESCE(SUM(s.quantity),0) as qty
 		FROM sales s
 		JOIN products p ON p.id = s.product_id
-		LEFT JOIN categories c ON c.id = p.category_id
-		LEFT JOIN marketplaces m ON m.id = s.marketplace_id
-		%s
-		GROUP BY p.id, p.name, p.sku, c.name, p.cost_price
-		HAVING SUM(s.quantity) > 0
-		ORDER BY SUM(s.revenue) DESC
-		LIMIT 100`, whereClause)
-
-	rows, err := h.db.Query(ctx, q, args...)
+		WHERE s.sale_date >= $1 AND s.sale_date <= $2
+		
+		GROUP BY p.id, p.sku, p.name
+		ORDER BY rev DESC`, dateFrom, dateTo)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "db error: " + err.Error()})
+		c.JSON(500, gin.H{"error": "db error"})
 		return
 	}
 	defer rows.Close()
 
-	var products []gin.H
-	var totRev, totProf, totComm, totLogi, totCost float64
-	var totQty int
-
-	for rows.Next() {
-		var id, name, sku, cat string
-		var costPrice, avgPrice, rev, prof float64
-		var qty int
-		var comm, logi, totalCost float64
-		if err := rows.Scan(&id, &name, &sku, &cat, &costPrice, &avgPrice, &rev, &prof, &qty, &comm, &logi, &totalCost); err != nil {
-			continue
-		}
-
-		profitPerUnit := div(prof, float64(qty))
-		commPerUnit := div(comm, float64(qty))
-		logiPerUnit := div(logi, float64(qty))
-		marginPct := pct(prof, rev)
-
-		products = append(products, gin.H{
-			"id": id, "name": name, "sku": sku, "category": cat,
-			"cost_price": round2(costPrice), "avg_price": round2(avgPrice),
-			"revenue": round2(rev), "profit": round2(prof), "quantity": qty,
-			"commission": round2(comm), "logistics": round2(logi),
-			"profit_per_unit": round2(profitPerUnit),
-			"commission_per_unit": round2(commPerUnit),
-			"logistics_per_unit": round2(logiPerUnit),
-			"margin_pct": round2(marginPct),
-		})
-
-		totRev += rev
-		totProf += prof
-		totComm += comm
-		totLogi += logi
-		totCost += totalCost
-		totQty += qty
+	type item struct {
+		ID int; SKU, Name string; Rev, Prof float64; Qty int
 	}
-	if products == nil {
-		products = []gin.H{}
+	var items []item
+	var totalRev2 float64
+	for rows.Next() {
+		var it item
+		if rows.Scan(&it.ID, &it.SKU, &it.Name, &it.Rev, &it.Prof, &it.Qty) == nil {
+			items = append(items, it)
+			totalRev2 += it.Rev
+		}
+	}
+
+	var result []gin.H
+	cumPct := 0.0
+	for _, it := range items {
+		sh := pct(it.Rev, totalRev2)
+		cumPct += sh
+		cat := "C"
+		if cumPct <= 80 { cat = "A" } else if cumPct <= 95 { cat = "B" }
+		result = append(result, gin.H{
+			"product_id": it.ID, "sku": it.SKU, "name": it.Name,
+			"revenue": round2(it.Rev), "profit": round2(it.Prof),
+			"quantity": it.Qty, "share_pct": round2(sh),
+			"cumulative_pct": round2(cumPct), "abc_category": cat,
+		})
+	}
+	if result == nil { result = []gin.H{} }
+
+	aCount, bCount, cCount := 0, 0, 0
+	for _, r := range result {
+		switch r["abc_category"] {
+		case "A": aCount++
+		case "B": bCount++
+		case "C": cCount++
+		}
 	}
 
 	c.JSON(200, gin.H{
-		"period": period, "date_from": dateFrom, "date_to": dateTo,
-		"products": products,
-		"totals": gin.H{
-			"revenue": round2(totRev), "profit": round2(totProf),
-			"commission": round2(totComm), "logistics": round2(totLogi),
-			"cost_of_goods": round2(totCost), "quantity": totQty,
-			"margin_pct": round2(pct(totProf, totRev)),
-			"avg_profit_per_unit": round2(div(totProf, float64(totQty))),
-		},
+		"period": period, "items": result,
+		"summary": gin.H{"a_count": aCount, "b_count": bCount, "c_count": cCount, "total": len(result)},
 	})
 }

@@ -7,8 +7,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"sportdata-api/internal/handlers"
-	"sportdata-api/internal/middleware"
+	"sportdata/api-gateway/internal/handlers"
+	"sportdata/api-gateway/internal/middleware"
 )
 
 func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
