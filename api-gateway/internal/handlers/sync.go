@@ -279,6 +279,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 		CredentialID int    `json:"credential_id"`
 	}
 	c.ShouldBindJSON(&req)
+	if req.Marketplace == "" { req.Marketplace = c.Param("marketplace") }
 
 	etlURL := os.Getenv("ETL_SERVICE_URL")
 	if etlURL == "" {
@@ -287,7 +288,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 	etlSecret := os.Getenv("ETL_SECRET")
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"marketplace":   c.Param("marketplace"),
+		"marketplace":   req.Marketplace,
 		"credential_id": req.CredentialID,
 	})
 
@@ -316,7 +317,7 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 
 	userID, _ := c.Get("user_id")
 	h.auditLog(c.Request.Context(), userID, "sync_triggered", "sync", "0",
-		fmt.Sprintf(`{"marketplace":"%s","credential_id":%d}`, c.Param("marketplace"), req.CredentialID), c.ClientIP())
+		fmt.Sprintf(`{"marketplace":"%s","credential_id":%d}`, req.Marketplace, req.CredentialID), c.ClientIP())
 
 	var result map[string]interface{}
 	json.Unmarshal(respBody, &result)

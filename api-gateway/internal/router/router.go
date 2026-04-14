@@ -110,6 +110,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 			mgmt.DELETE("/sync/credentials", h.DeleteSyncCredential)
 			mgmt.GET("/sync/history", h.GetSyncHistory)
 			mgmt.POST("/sync/trigger/:marketplace", h.TriggerSync)
+			mgmt.POST("/sync/trigger", h.TriggerSync)
 			mgmt.POST("/sync/cron", h.CronSync) // FIX #5 (was missing, handler exists)
 		}
 

@@ -1,25 +1,26 @@
 package middleware
 
 import (
-	"net/http"
-	"os"
-	"strings"
-
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Claims struct {
+	Sub    string `json:"sub,omitempty"`
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
 	Role   string `json:"role"`
 	Level  int    `json:"level"`
-	Hidden bool   `json:"hidden"`
+	Hidden bool   `json:"hidden,omitempty"`
 	Exp    int64  `json:"exp"`
 }
 
@@ -38,7 +39,7 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		if claims.Exp < time.Now().Unix() {
+		if claims.Exp > 0 && claims.Exp < time.Now().Unix() {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "Токен истёк"})
 			return
 		}
@@ -88,6 +89,22 @@ func SuperAdminOnly() gin.HandlerFunc {
 }
 
 func GenerateToken(claims Claims) (string, error) {
+	// ✅ ГЛАВНЫЙ ФИКС: устанавливаем exp
+	if claims.Exp == 0 {
+		hours := 24
+		if h := os.Getenv("JWT_EXPIRY_HOURS"); h != "" {
+			if parsed, err := strconv.Atoi(h); err == nil {
+				hours = parsed
+			}
+		}
+		claims.Exp = time.Now().Add(time.Duration(hours) * time.Hour).Unix()
+	}
+
+	// Дублируем UserID в sub для совместимости с jose/jsonwebtoken
+	if claims.Sub == "" {
+		claims.Sub = claims.UserID
+	}
+
 	secret := os.Getenv("JWT_SECRET")
 	header := base64url([]byte(`{"alg":"HS256","typ":"JWT"}`))
 	claimsJSON, _ := json.Marshal(claims)
