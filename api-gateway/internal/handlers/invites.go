@@ -40,7 +40,7 @@ func (h *Handler) GetInvites(c *gin.Context) {
 		var usedAt *time.Time
 		var createdByName *string
 
-		rows.Scan(&id, &email, &token, &roleLevel, &roleName, &expiresAt, &usedAt, &createdAt, &createdByName)
+		_ = rows.Scan(&id, &email, &token, &roleLevel, &roleName, &expiresAt, &usedAt, &createdAt, &createdByName)
 
 		inv := gin.H{
 			"id":         id,

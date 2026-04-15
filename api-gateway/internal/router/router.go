@@ -74,6 +74,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/export/sales", middleware.RoleRequired(4), h.ExportSales)
 		auth.GET("/export/products", middleware.RoleRequired(4), h.ExportProducts)
 		auth.GET("/export/analytics", middleware.RoleRequired(4), h.ExportAnalytics)
+		auth.GET("/export/sales-csv", middleware.RoleRequired(4), h.ExportSalesCSV)
 
 		// --- inventory (cached 60s) ---
 		auth.GET("/inventory", c60s, middleware.RoleRequired(4), h.GetInventory)
@@ -93,6 +94,12 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/analytics/finance", c60s, middleware.RoleRequired(4), h.GetFinance)
 		auth.GET("/analytics/returns", c60s, middleware.RoleRequired(4), h.GetReturnsAnalytics)
 		auth.GET("/analytics/rnp", c60s, middleware.RoleRequired(4), h.GetAnalyticsRNP)
+		auth.GET("/analytics/trends", c60s, middleware.RoleRequired(4), h.GetTrends)
+		auth.GET("/analytics/optimized", c60s, middleware.RoleRequired(4), h.GetAnalyticsOptimized)
+		auth.GET("/analytics/products", c60s, middleware.RoleRequired(4), h.GetProductsAnalytics)
+		auth.GET("/analytics/pnl-full", c60s, middleware.RoleRequired(4), h.GetPnLFull)
+		auth.GET("/analytics/finance-full", c60s, middleware.RoleRequired(4), h.GetFinanceFull)
+		auth.GET("/analytics/unit-economics-full", c60s, middleware.RoleRequired(4), h.GetUnitEconomicsFull)
 
 		// --- projects (cached 60s) ---
 		auth.GET("/projects", c60s, middleware.RoleRequired(4), h.GetProjects)

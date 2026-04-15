@@ -121,7 +121,7 @@ func (h *Handler) ExportSales(c *gin.Context) {
 		var qty int
 		var amt float64
 		var dt time.Time
-		rows.Scan(&id, &dt, &name, &qty, &amt)
+		_ = rows.Scan(&id, &dt, &name, &qty, &amt)
 		data.Rows = append(data.Rows, []interface{}{id, dt.Format("2006-01-02"), name, qty, amt})
 	}
 	h.sendExport(c, data, "sales")
@@ -197,7 +197,7 @@ func (h *Handler) ExportAnalytics(c *gin.Context) {
 		FROM sales WHERE sale_date >= NOW() - INTERVAL '1 day' * $1`, days)
 	var rev, avg float64
 	var cnt int
-	row.Scan(&rev, &cnt, &avg)
+	_ = row.Scan(&rev, &cnt, &avg)
 	if format == "json" {
 		c.JSON(200, gin.H{"period": periodLabel(period), "revenue": rev, "orders": cnt, "avg": avg})
 		return

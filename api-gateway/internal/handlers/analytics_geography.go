@@ -54,7 +54,7 @@ func (h *Handler) GetGeography(c *gin.Context) {
 		var country string
 		var rev float64
 		var qty, orders, returns int
-		cRows.Scan(&country, &rev, &qty, &orders, &returns)
+		_ = cRows.Scan(&country, &rev, &qty, &orders, &returns)
 		rr := 0.0
 		if (qty + returns) > 0 {
 			rr = round2(float64(returns) / float64(qty+returns) * 100)
@@ -87,7 +87,7 @@ func (h *Handler) GetGeography(c *gin.Context) {
 		var wh string
 		var rev float64
 		var qty, orders, returns int
-		wRows.Scan(&wh, &rev, &qty, &orders, &returns)
+		_ = wRows.Scan(&wh, &rev, &qty, &orders, &returns)
 		byWarehouse = append(byWarehouse, gin.H{"warehouse": wh, "revenue": round2(rev), "quantity": qty, "orders": orders, "returns": returns})
 	}
 	if byWarehouse == nil {

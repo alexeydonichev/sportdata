@@ -207,7 +207,7 @@ func (h *Handler) Register(c *gin.Context) {
 
 	// Check existing
 	var exists int
-	h.db.QueryRow(ctx, `SELECT 1 FROM users WHERE email=$1`, email).Scan(&exists)
+	_ = h.db.QueryRow(ctx, `SELECT 1 FROM users WHERE email=$1`, email).Scan(&exists)
 	if exists == 1 {
 		c.JSON(409, gin.H{"error": "Пользователь с таким email уже существует"})
 		return
@@ -237,7 +237,7 @@ func (h *Handler) Register(c *gin.Context) {
 	defer rows.Close()
 	for rows.Next() {
 		var st, sv string
-		rows.Scan(&st, &sv)
+		_ = rows.Scan(&st, &sv)
 		h.db.Exec(ctx, `INSERT INTO user_scopes (user_id, scope_type, scope_value) VALUES ($1,$2,$3)`, userID, st, sv)
 	}
 
@@ -254,7 +254,7 @@ func (h *Handler) Register(c *gin.Context) {
 	defer scopeRows.Close()
 	for scopeRows.Next() {
 		var s scope
-		scopeRows.Scan(&s.Type, &s.Value)
+		_ = scopeRows.Scan(&s.Type, &s.Value)
 		scopes = append(scopes, s)
 	}
 

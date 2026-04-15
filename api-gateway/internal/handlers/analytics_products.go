@@ -106,7 +106,7 @@ func (h *Handler) GetProductsAnalytics(c *gin.Context) {
 
 	// Summary
 	var totalProducts int
-	h.db.QueryRow(ctx, fmt.Sprintf(`
+	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(DISTINCT s.product_id)
 		FROM sales s
 		JOIN marketplaces mp ON mp.id=s.marketplace_id

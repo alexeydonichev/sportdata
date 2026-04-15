@@ -452,19 +452,19 @@ func (h *Handler) GetSystemInfo(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var dbSize string
-	h.db.QueryRow(ctx, "SELECT pg_size_pretty(pg_database_size(current_database()))").Scan(&dbSize)
+	_ = h.db.QueryRow(ctx, "SELECT pg_size_pretty(pg_database_size(current_database()))").Scan(&dbSize)
 
 	var tableCount int
-	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'").Scan(&tableCount)
+	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'").Scan(&tableCount)
 
 	var userCount int
-	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&userCount)
+	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&userCount)
 
 	var productCount int
-	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM products").Scan(&productCount)
+	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM products").Scan(&productCount)
 
 	var salesCount int64
-	h.db.QueryRow(ctx, "SELECT COUNT(*) FROM sales").Scan(&salesCount)
+	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM sales").Scan(&salesCount)
 
 	c.JSON(200, gin.H{
 		"db_size":       dbSize,

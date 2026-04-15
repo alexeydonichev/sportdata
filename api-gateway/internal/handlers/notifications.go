@@ -38,7 +38,7 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 			var pid, name, sku string
 			var stock int
 			var avgDaily float64
-			stockRows.Scan(&pid, &name, &sku, &stock, &avgDaily)
+			_ = stockRows.Scan(&pid, &name, &sku, &stock, &avgDaily)
 			if avgDaily <= 0 {
 				continue
 			}
@@ -97,7 +97,7 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 			var pid, name, sku string
 			var curQty, prevQty int
 			var curRev, prevRev float64
-			salesRows.Scan(&pid, &name, &sku, &curQty, &prevQty, &curRev, &prevRev)
+			_ = salesRows.Scan(&pid, &name, &sku, &curQty, &prevQty, &curRev, &prevRev)
 			if prevRev <= 0 && curRev <= 0 {
 				continue
 			}
@@ -159,7 +159,7 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 		for retRows.Next() {
 			var pid, name, sku string
 			var sold, returned int
-			retRows.Scan(&pid, &name, &sku, &sold, &returned)
+			_ = retRows.Scan(&pid, &name, &sku, &sold, &returned)
 			retPct := float64(returned) / float64(sold) * 100
 			sev := "warning"
 			warningCount++

@@ -149,7 +149,7 @@ func (h *Handler) GetProjects(c *gin.Context) {
 	projects := []Project{}
 	for rows.Next() {
 		var p Project
-		rows.Scan(&p.ID, &p.Name, &p.Slug)
+		_ = rows.Scan(&p.ID, &p.Name, &p.Slug)
 		projects = append(projects, p)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": projects})
@@ -183,7 +183,7 @@ func (h *Handler) GetManagers(c *gin.Context) {
 	managers := []Manager{}
 	for rows.Next() {
 		var m Manager
-		rows.Scan(&m.ID, &m.FirstName, &m.LastName, &m.Email, &m.Role)
+		_ = rows.Scan(&m.ID, &m.FirstName, &m.LastName, &m.Email, &m.Role)
 		m.FullName = m.FirstName + " " + m.LastName
 		managers = append(managers, m)
 	}
@@ -533,7 +533,7 @@ func (h *Handler) GetRNPDailyStats(c *gin.Context) {
 	for rows.Next() {
 		var s DailyStat
 		var date time.Time
-		rows.Scan(&date, &s.TargetOrders, &s.FactOrders, &s.FactOrdersRub,
+		_ = rows.Scan(&date, &s.TargetOrders, &s.FactOrders, &s.FactOrdersRub,
 			&s.StockFBO, &s.StockFBS, &s.CurrentPrice, &s.DiscountPercent, &s.SPPPercent, &s.Comment)
 		s.Date = date.Format("2006-01-02")
 		stats = append(stats, s)
@@ -623,7 +623,7 @@ func (h *Handler) GetRNPChecklist(c *gin.Context) {
 	items := []ChecklistItem{}
 	for rows.Next() {
 		var i ChecklistItem
-		rows.Scan(&i.ID, &i.TemplateID, &i.Name, &i.IsDone, &i.DoneAt, &i.DoneBy, &i.Comment)
+		_ = rows.Scan(&i.ID, &i.TemplateID, &i.Name, &i.IsDone, &i.DoneAt, &i.DoneBy, &i.Comment)
 		items = append(items, i)
 	}
 
@@ -705,7 +705,7 @@ func (h *Handler) GetChecklistTemplates(c *gin.Context) {
 	templates := []Template{}
 	for rows.Next() {
 		var t Template
-		rows.Scan(&t.ID, &t.Name, &t.SortOrder)
+		_ = rows.Scan(&t.ID, &t.Name, &t.SortOrder)
 		templates = append(templates, t)
 	}
 

@@ -73,7 +73,7 @@ func (h *Handler) GetAnalyticsRNP(c *gin.Context) {
 	}
 
 	var total int
-	h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM rnp_items`).Scan(&total)
+	_ = h.db.QueryRow(c.Request.Context(), `SELECT COUNT(*) FROM rnp_items`).Scan(&total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"items": items,

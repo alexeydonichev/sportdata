@@ -27,7 +27,7 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 	// Current period sales
 	var totalSales int
 	var totalRevenue, totalProfit float64
-	h.db.QueryRow(ctx, fmt.Sprintf(`
+	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COALESCE(SUM(s.quantity),0)::int, COALESCE(SUM(s.revenue),0)::float8, COALESCE(SUM(s.net_profit),0)::float8
 		FROM sales s JOIN products p ON p.id=s.product_id LEFT JOIN categories c ON c.id=p.category_id
 		WHERE s.sale_date>=CURRENT_DATE-$1::int AND s.quantity>0 %s
@@ -36,7 +36,7 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 	// Current period returns
 	var curReturns int
 	var curRetAmount, curLogCost float64
-	h.db.QueryRow(ctx, fmt.Sprintf(`
+	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COALESCE(SUM(r.quantity),0)::int, COALESCE(SUM(r.return_amount),0)::float8, COALESCE(SUM(r.logistics_cost),0)::float8
 		FROM returns r JOIN products p ON p.id=r.product_id LEFT JOIN categories c ON c.id=p.category_id
 		WHERE r.return_date>=CURRENT_DATE-$1::int %s
@@ -46,12 +46,12 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 	var prevReturns int
 	var prevRetAmount float64
 	var prevSales int
-	h.db.QueryRow(ctx, fmt.Sprintf(`
+	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COALESCE(SUM(r.quantity),0)::int, COALESCE(SUM(r.return_amount),0)::float8
 		FROM returns r JOIN products p ON p.id=r.product_id LEFT JOIN categories c ON c.id=p.category_id
 		WHERE r.return_date>=CURRENT_DATE-($1::int*2) AND r.return_date<CURRENT_DATE-$1::int %s
 	`, catF), params...).Scan(&prevReturns, &prevRetAmount)
-	h.db.QueryRow(ctx, fmt.Sprintf(`
+	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COALESCE(SUM(s.quantity),0)::int
 		FROM sales s JOIN products p ON p.id=s.product_id LEFT JOIN categories c ON c.id=p.category_id
 		WHERE s.sale_date>=CURRENT_DATE-($1::int*2) AND s.sale_date<CURRENT_DATE-$1::int AND s.quantity>0 %s

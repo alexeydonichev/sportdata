@@ -47,7 +47,7 @@ func (h *Handler) GetProducts(c *gin.Context) {
 
 	var total int
 	cntQ := fmt.Sprintf("SELECT COUNT(DISTINCT p.id) %s %s", j, w)
-	h.db.QueryRow(ctx, cntQ, a...).Scan(&total)
+	_ = h.db.QueryRow(ctx, cntQ, a...).Scan(&total)
 
 	q := fmt.Sprintf(`SELECT p.id, p.sku, p.name,
 		COALESCE(SUM(s.revenue),0) as revenue,
@@ -149,7 +149,7 @@ func (h *Handler) GetProduct(c *gin.Context) {
 
 	var detectedMP *string
 	var detectedMPID *int
-	h.db.QueryRow(ctx, `SELECT m.name, m.id FROM sales s
+	_ = h.db.QueryRow(ctx, `SELECT m.name, m.id FROM sales s
 		JOIN marketplaces m ON m.id = s.marketplace_id
 		WHERE s.product_id = $1 LIMIT 1`, id).Scan(&detectedMP, &detectedMPID)
 
@@ -158,7 +158,7 @@ func (h *Handler) GetProduct(c *gin.Context) {
 
 	var rev, prof, comm, logi float64
 	var qty, orders int
-	h.db.QueryRow(ctx, `SELECT COALESCE(SUM(revenue),0),
+	_ = h.db.QueryRow(ctx, `SELECT COALESCE(SUM(revenue),0),
 		COALESCE(SUM(net_profit),0), COALESCE(SUM(commission),0),
 		COALESCE(SUM(logistics_cost),0), COALESCE(SUM(quantity),0), COUNT(*)
 		FROM sales WHERE product_id=$1 AND sale_date>=$2 AND sale_date<=$3`,
