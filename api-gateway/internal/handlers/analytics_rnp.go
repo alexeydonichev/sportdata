@@ -35,29 +35,29 @@ func (h *Handler) GetAnalyticsRNP(c *gin.Context) {
 	rows, err := h.db.Query(c.Request.Context(), `
 		SELECT
 			ri.id,
-			rt.name        AS template_name,
-			ri.product_name,
-			ri.sku,
-			ri.target_value,
-			COALESCE(SUM(rd.value), 0) AS actual,
-			CASE WHEN ri.target_value > 0
-				THEN ROUND(COALESCE(SUM(rd.value), 0) / ri.target_value * 100, 1)
+			rt.year || '-' || LPAD(rt.month::text, 2, '0') AS template_name,
+			COALESCE(ri.name, '')  AS product_name,
+			COALESCE(ri.sku, '')   AS sku,
+			COALESCE(ri.plan_orders_qty, 0) AS target,
+			COALESCE(SUM(rd.fact_orders_qty), 0) AS actual,
+			CASE WHEN COALESCE(ri.plan_orders_qty, 0) > 0
+				THEN ROUND(COALESCE(SUM(rd.fact_orders_qty), 0)::numeric / ri.plan_orders_qty * 100, 1)
 				ELSE 0 END AS progress,
 			CASE
-				WHEN COALESCE(SUM(rd.value), 0) >= ri.target_value THEN 'done'
-				WHEN COALESCE(SUM(rd.value), 0) > 0 THEN 'in_progress'
+				WHEN COALESCE(SUM(rd.fact_orders_qty), 0) >= COALESCE(ri.plan_orders_qty, 0) THEN 'done'
+				WHEN COALESCE(SUM(rd.fact_orders_qty), 0) > 0 THEN 'in_progress'
 				ELSE 'not_started'
 			END AS status
 		FROM rnp_items ri
 		JOIN rnp_templates rt ON rt.id = ri.template_id
-		LEFT JOIN rnp_daily_stats rd ON rd.item_id = ri.id
-			AND rd.stat_date BETWEEN $1 AND $2
-		GROUP BY ri.id, rt.name, ri.product_name, ri.sku, ri.target_value
+		LEFT JOIN rnp_daily_facts rd ON rd.item_id = ri.id
+			AND rd.fact_date BETWEEN $1 AND $2
+		GROUP BY ri.id, rt.year, rt.month, ri.name, ri.sku, ri.plan_orders_qty
 		ORDER BY progress DESC
 		LIMIT $3 OFFSET $4
 	`, dateFrom, dateTo, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error: " + err.Error()})
 		return
 	}
 	defer rows.Close()

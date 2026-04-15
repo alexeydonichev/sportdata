@@ -61,7 +61,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
-      REDIS_URL: redis://:SportDataRedis2024Secure@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       PASETO_SECRET_KEY: ${PASETO_SECRET_KEY}
       JWT_SECRET: ${PASETO_SECRET_KEY}
@@ -101,7 +101,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
-      REDIS_URL: redis://:SportDataRedis2024Secure@redis:6379/0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       ETL_SECRET: ${ETL_SERVICE_SECRET}
       ETL_LISTEN: ":8081"

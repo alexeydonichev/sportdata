@@ -39,7 +39,7 @@ db-shell: ## Подключиться к PostgreSQL
 	docker compose exec postgres psql -U sportdata_admin -d sportdata
 
 redis-shell: ## Подключиться к Redis
-	docker compose exec redis redis-cli -a SportData_Redis_2025!
+	docker compose exec redis redis-cli -a $${REDIS_PASSWORD}
 
 # ============================================
 # API (Go)

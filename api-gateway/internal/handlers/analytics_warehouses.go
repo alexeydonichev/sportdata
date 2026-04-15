@@ -25,7 +25,7 @@ func (h *Handler) GetWarehousesAnalytics(c *gin.Context) {
 	}
 
 	rows, err := h.db.Query(ctx, fmt.Sprintf(`
-		SELECT COALESCE(NULLIF(s.warehouse_name,''),'Не указан'),
+		SELECT COALESCE(NULLIF(s.warehouse,''),'Не указан'),
 			COALESCE(SUM(CASE WHEN s.quantity>0 THEN s.revenue ELSE 0 END),0)::float8,
 			COALESCE(SUM(CASE WHEN s.quantity>0 THEN s.quantity ELSE 0 END),0)::int,
 			COALESCE(SUM(CASE WHEN s.quantity>0 THEN s.net_profit ELSE 0 END),0)::float8,
@@ -33,7 +33,7 @@ func (h *Handler) GetWarehousesAnalytics(c *gin.Context) {
 		FROM sales s
 		JOIN marketplaces mp ON mp.id=s.marketplace_id
 		WHERE s.sale_date>=CURRENT_DATE-$1::int %s
-		GROUP BY s.warehouse_name ORDER BY 2 DESC LIMIT 50
+		GROUP BY s.warehouse ORDER BY 2 DESC LIMIT 50
 	`, mpF), params...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

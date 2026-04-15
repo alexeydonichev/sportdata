@@ -11,26 +11,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetSupplierSales — proxy WB supplier sales (or cached from DB)
 func (h *Handler) GetSupplierSales(c *gin.Context) {
 	dateFrom := c.DefaultQuery("dateFrom", time.Now().AddDate(0, 0, -7).Format("2006-01-02"))
 
-	// Try DB first (synced data)
-	rows, err := h.db.Query(c.Request.Context(), `
-		SELECT
-			s.sale_date,
-			s.product_name,
-			s.sku,
-			s.quantity,
-			s.revenue,
-			s.marketplace
-		FROM sales s
-		WHERE s.sale_date >= $1
-		ORDER BY s.sale_date DESC
-		LIMIT 500
-	`, dateFrom)
+	rows, err := h.db.Query(c.Request.Context(),
+		`SELECT s.sale_date::text, COALESCE(p.name,''), COALESCE(p.sku,''),
+		        s.quantity, s.revenue, COALESCE(m.name,'')
+		 FROM sales s
+		 LEFT JOIN products p ON p.id = s.product_id
+		 LEFT JOIN marketplaces m ON m.id = s.marketplace_id
+		 WHERE s.sale_date >= $1
+		 ORDER BY s.sale_date DESC LIMIT 500`, dateFrom)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error: " + err.Error()})
 		return
 	}
 	defer rows.Close()
@@ -52,31 +45,21 @@ func (h *Handler) GetSupplierSales(c *gin.Context) {
 		}
 		items = append(items, s)
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"sales": items,
-		"total": len(items),
-	})
+	c.JSON(http.StatusOK, gin.H{"sales": items, "total": len(items)})
 }
 
-// GetSupplierStocks — proxy WB supplier stocks (or cached from DB)
 func (h *Handler) GetSupplierStocks(c *gin.Context) {
-	rows, err := h.db.Query(c.Request.Context(), `
-		SELECT
-			i.product_name,
-			i.sku,
-			i.barcode,
-			i.warehouse,
-			i.quantity,
-			i.marketplace,
-			i.updated_at
-		FROM inventory i
-		WHERE i.quantity > 0
-		ORDER BY i.quantity DESC
-		LIMIT 500
-	`)
+	rows, err := h.db.Query(c.Request.Context(),
+		`SELECT COALESCE(p.name,''), COALESCE(p.sku,''), COALESCE(p.barcode,''),
+		        COALESCE(i.warehouse,''), i.quantity, COALESCE(m.name,''),
+		        i.recorded_at::text
+		 FROM inventory i
+		 LEFT JOIN products p ON p.id = i.product_id
+		 LEFT JOIN marketplaces m ON m.id = i.marketplace_id
+		 WHERE i.quantity > 0
+		 ORDER BY i.quantity DESC LIMIT 500`)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "db error: " + err.Error()})
 		return
 	}
 	defer rows.Close()
@@ -100,34 +83,26 @@ func (h *Handler) GetSupplierStocks(c *gin.Context) {
 		}
 		items = append(items, s)
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"stocks": items,
-		"total":  len(items),
-	})
+	c.JSON(http.StatusOK, gin.H{"stocks": items, "total": len(items)})
 }
 
-// wbAPICall — helper for direct WB API calls (future use)
 func wbAPICall(ctx context.Context, apiKey, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", apiKey)
-
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("WB API returned %d", resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
 }
 
-// Suppress unused import warnings
 var _ = json.Marshal
 var _ = fmt.Sprintf
