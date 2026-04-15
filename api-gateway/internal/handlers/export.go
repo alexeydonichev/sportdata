@@ -19,18 +19,6 @@ type ExportData struct {
 	Summary   map[string]interface{}
 }
 
-func parsePeriodDays(p string) int {
-	switch p {
-	case "7d":
-		return 7
-	case "14d":
-		return 14
-	case "90d":
-		return 90
-	default:
-		return 30
-	}
-}
 
 func periodLabel(p string) string {
 	switch p {
@@ -113,7 +101,7 @@ func (h *Handler) sendExport(c *gin.Context, data *ExportData, fname string) {
 
 func (h *Handler) ExportSales(c *gin.Context) {
 	period := c.DefaultQuery("period", "30d")
-	days := parsePeriodDays(period)
+	days := parseDays(period)
 	rows, err := h.db.Query(c.Request.Context(), `
 		SELECT s.id, s.sale_date, COALESCE(p.name,''), s.quantity, s.revenue
 		FROM sales s
@@ -203,7 +191,7 @@ func (h *Handler) ExportProducts(c *gin.Context) {
 func (h *Handler) ExportAnalytics(c *gin.Context) {
 	format := c.DefaultQuery("format", "xlsx")
 	period := c.DefaultQuery("period", "30d")
-	days := parsePeriodDays(period)
+	days := parseDays(period)
 	row := h.db.QueryRow(c.Request.Context(), `
 		SELECT COALESCE(SUM(revenue),0), COUNT(*), COALESCE(AVG(revenue),0)
 		FROM sales WHERE sale_date >= NOW() - INTERVAL '1 day' * $1`, days)

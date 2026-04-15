@@ -52,7 +52,6 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/auth/profile", middleware.RoleRequired(4), h.GetProfile)
 		auth.PUT("/auth/avatar", middleware.RoleRequired(4), h.UploadAvatar)
 		auth.PUT("/auth/password", middleware.RoleRequired(4), h.ChangePassword)
-		auth.GET("/profile", middleware.RoleRequired(4), h.GetProfile)
 
 		// --- dashboard (cached 30s) ---
 		auth.GET("/dashboard", c30s, middleware.RoleRequired(4), h.GetDashboard)
@@ -66,12 +65,10 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.PATCH("/products/:id", middleware.RoleRequired(3), h.UpdateProduct)
 
 		// --- references (cached 5m) ---
-		auth.GET("/categories", c5m, middleware.RoleRequired(4), h.GetCategories)
 		auth.GET("/marketplaces", c5m, middleware.RoleRequired(4), h.GetMarketplaces)
 
 		// --- sales (cached 30s) ---
 		auth.GET("/sales", c30s, middleware.RoleRequired(4), h.GetSales)
-		auth.GET("/sales/export", middleware.RoleRequired(4), h.ExportSalesCSV)
 
 		// --- export (no cache — file downloads) ---
 		auth.GET("/export/sales", middleware.RoleRequired(4), h.ExportSales)

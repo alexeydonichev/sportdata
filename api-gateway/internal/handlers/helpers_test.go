@@ -168,8 +168,8 @@ func TestParsePeriodDays(t *testing.T) {
 		{"7d", 7}, {"14d", 14}, {"90d", 90}, {"30d", 30}, {"unknown", 30},
 	}
 	for _, tt := range tests {
-		if got := parsePeriodDays(tt.period); got != tt.want {
-			t.Errorf("parsePeriodDays(%q) = %d, want %d", tt.period, got, tt.want)
+		if got := parseDays(tt.period); got != tt.want {
+			t.Errorf("parseDays(%q) = %d, want %d", tt.period, got, tt.want)
 		}
 	}
 }

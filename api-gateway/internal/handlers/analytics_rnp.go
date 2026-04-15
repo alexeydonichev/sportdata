@@ -10,7 +10,7 @@ import (
 // GetAnalyticsRNP — сводная аналитика по РНП (список items с метриками)
 func (h *Handler) GetAnalyticsRNP(c *gin.Context) {
 	period := c.DefaultQuery("period", "30d")
-	dateFrom, dateTo := parsePeriod(period)
+	dateFrom, dateTo := h.parsePeriod(period)
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	if page < 1 {

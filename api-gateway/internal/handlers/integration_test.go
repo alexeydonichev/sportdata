@@ -913,13 +913,13 @@ func TestIntegration_ExportSalesCSV(t *testing.T) {
 	expectCode(t, "ExportSalesCSV", w, 200)
 }
 
-// ── HealthCheck (duplicate endpoint) ─────────────────────────────────
+// ── Health (alias) (duplicate endpoint) ─────────────────────────────────
 
-func TestIntegration_HealthCheck(t *testing.T) {
+func TestIntegration_Health (alias)(t *testing.T) {
 	r := gin.New()
-	r.GET("/hc", testHandler.HealthCheck)
+	r.GET("/hc", testHandler.Health)
 
 	w := doGET(t, r, "/hc")
-	t.Logf("HealthCheck: %d %s", w.Code, w.Body.String())
-	expectCode(t, "HealthCheck", w, 200)
+	t.Logf("Health (alias): %d %s", w.Code, w.Body.String())
+	expectCode(t, "Health (alias)", w, 200)
 }

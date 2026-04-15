@@ -25,7 +25,7 @@ func (h *Handler) GetSales(c *gin.Context) {
 	}
 	offset := (page - 1) * limit
 
-	dateFrom, dateTo := parsePeriod(period)
+	dateFrom, dateTo := h.parsePeriod(period)
 
 	conditions := []string{"s.sale_date >= $1", "s.sale_date <= $2"}
 	args := []any{dateFrom, dateTo}
@@ -194,7 +194,7 @@ func (h *Handler) ExportSalesCSV(c *gin.Context) {
 	categorySlug := c.Query("category")
 	marketplaceSlug := c.Query("marketplace")
 
-	dateFrom, dateTo := parsePeriod(period)
+	dateFrom, dateTo := h.parsePeriod(period)
 
 	conditions := []string{"s.sale_date >= $1", "s.sale_date <= $2"}
 	args := []any{dateFrom, dateTo}

@@ -149,12 +149,17 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	var email, firstName, lastName, roleSlug string
 	var roleLevel int
 
-	h.db.QueryRow(ctx, `
+	err := h.db.QueryRow(ctx, `
 		SELECT u.email, u.first_name, u.last_name, r.slug, r.level
 		FROM users u
 		JOIN roles r ON r.id = u.role_id
 		WHERE u.id = $1
 	`, userID).Scan(&email, &firstName, &lastName, &roleSlug, &roleLevel)
+
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
+		return
+	}
 
 	c.JSON(200, gin.H{
 		"id":         userID,

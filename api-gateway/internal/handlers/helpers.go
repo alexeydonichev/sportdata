@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net/http"
 	"sync"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -40,6 +38,7 @@ func changePct(current, previous float64) float64 {
 
 func changeDiff(current, previous float64) float64 { return round2(current - previous) }
 
+// pctChange — алиас для changePct (используется в returns.go)
 func pctChange(current, previous float64) float64 { return changePct(current, previous) }
 
 var (
@@ -129,21 +128,6 @@ func buildSalesWherePrev(dateFrom, dateTo, category, marketplace string) (string
 	return buildSalesWhere(dateFrom, dateTo, category, marketplace)
 }
 
-func (h *Handler) HealthCheck(c *gin.Context) {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
-	defer cancel()
-	dbOK := h.db.Ping(ctx) == nil
-	status := "ok"
-	code := http.StatusOK
-	if !dbOK {
-		status = "degraded"
-		code = http.StatusServiceUnavailable
-	}
-	c.JSON(code, gin.H{
-		"status": status, "postgres": dbOK,
-		"time": time.Now().Format(time.RFC3339), "version": "2.1.0",
-	})
-}
 
 func parseDays(period string) int {
 	switch period {
