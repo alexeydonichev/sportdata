@@ -13,17 +13,17 @@ import (
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://sportdata_admin:SportData_S3cure_2025!@localhost:5432/sportdata?sslmode=disable"
+		log.Fatal("DATABASE_URL environment variable is required")
 	}
 
 	password := os.Getenv("ADMIN_PASSWORD")
 	if password == "" {
-		password = "YF_Sup3r_Adm1n_2026!"
+		log.Fatal("ADMIN_PASSWORD environment variable is required")
 	}
 
 	email := os.Getenv("ADMIN_EMAIL")
 	if email == "" {
-		email = "admin@yourfit.ru"
+		log.Fatal("ADMIN_EMAIL environment variable is required")
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -53,5 +53,5 @@ func main() {
 		log.Fatal("insert error:", err)
 	}
 
-	fmt.Printf("✅ Супер-админ создан: %s / %s (rows affected: %d)\n", email, password, tag.RowsAffected())
+	fmt.Printf("✅ Супер-админ создан: %s (rows affected: %d)\n", email, tag.RowsAffected())
 }

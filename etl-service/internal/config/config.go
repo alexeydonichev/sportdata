@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"log"
 	"os"
 	"strings"
 )
@@ -20,7 +21,7 @@ func Load() *Config {
 	loadEnv(".env")
 
 	return &Config{
-		DatabaseURL:    getEnv("DATABASE_URL", "postgres://sportdata_admin:SportData_S3cure_2025!@postgres:5432/sportdata?sslmode=disable"),
+		DatabaseURL:    requireEnv("DATABASE_URL"),
 		RedisURL:       getEnv("REDIS_URL", "redis:6379"),
 		EncryptionKey:  getEnv("ENCRYPTION_KEY", ""),
 		ETLSecret:      getEnv("ETL_SECRET", ""),
@@ -34,6 +35,14 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func requireEnv(key string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	log.Fatalf("Required environment variable %s is not set", key)
+	return ""
 }
 
 func loadEnv(path string) {

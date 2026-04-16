@@ -58,6 +58,7 @@ services:
     container_name: sportdata-api-gateway
     volumes:
       - ./migrations:/app/migrations:ro
+      - /var/www/sportdata/uploads:/app/uploads
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-sportdata_admin}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sportdata}?sslmode=disable
@@ -71,6 +72,7 @@ services:
       ETL_SERVICE_URL: http://etl-worker:8081
       API_GATEWAY_URL: http://api-gateway:8080
       GIN_MODE: release
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://stridepax.tech}
       PORT: "8080"
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL}
       SUPERADMIN_PASSWORD: ${SUPERADMIN_PASSWORD}

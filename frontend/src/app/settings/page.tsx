@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import { api, UserInfo } from "@/lib/api";
 import { User, Lock, Bell, Save, Check, Loader2, Shield, Eye, EyeOff, Camera } from "lucide-react";
-import Image from "next/image";
 
 interface PasswordCheck {
   label: string;
@@ -87,7 +86,7 @@ export default function SettingsPage() {
 
       const token = api.getToken();
       const res = await fetch("/api/v1/auth/avatar", {
-        method: "POST",
+        method: "PUT",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
@@ -205,13 +204,7 @@ export default function SettingsPage() {
                   className="relative w-12 h-12 rounded-full bg-surface-3 flex items-center justify-center overflow-hidden group cursor-pointer"
                 >
                   {avatarUrl ? (
-                    <Image
-                      src={avatarUrl}
-                      alt="Avatar"
-                      width={48}
-                      height={48}
-                      className="w-full h-full object-cover"
-                    />
+                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                   ) : (
                     <User className="h-5 w-5 text-text-secondary" />
                   )}

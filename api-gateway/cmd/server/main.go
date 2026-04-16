@@ -14,15 +14,17 @@ import (
 func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://sportdata:sportdata@localhost:5432/sportdata?sslmode=disable"
+		log.Fatal("DATABASE_URL environment variable is required")
 	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
-		redisURL = "redis://localhost:6379/0"
+		log.Fatal("REDIS_URL environment variable is required")
 	}
 
 	ctx := context.Background()
@@ -39,17 +41,14 @@ func main() {
 
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
-		log.Printf("Redis URL parse error: %v — running without Redis", err)
+		log.Fatalf("Redis URL parse error: %v", err)
 	}
-	var redisClient *redis.Client
-	if opts != nil {
-		redisClient = redis.NewClient(opts)
-		if _, err := redisClient.Ping(ctx).Result(); err != nil {
-			log.Printf("Redis ping failed: %v — running without Redis", err)
-			redisClient = nil
-		} else {
-			log.Println("Connected to Redis")
-		}
+	redisClient := redis.NewClient(opts)
+	if _, err := redisClient.Ping(ctx).Result(); err != nil {
+		log.Printf("Redis ping failed: %v — running without Redis", err)
+		redisClient = nil
+	} else {
+		log.Println("Connected to Redis")
 	}
 
 	r := router.Setup(pool, redisClient)

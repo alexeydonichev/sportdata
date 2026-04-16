@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"crypto/rand"
+	"bytes"
 	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +43,7 @@ func (h *Handler) Login(c *gin.Context) {
 		       u.is_hidden, u.is_active, r.slug, r.level
 		FROM users u
 		JOIN roles r ON r.id = u.role_id
-		WHERE u.email = $1
+		WHERE u.email = $1 AND u.deleted_at IS NULL
 	`, req.Email).Scan(&userID, &email, &firstName, &lastName, &passwordHash,
 		&isHidden, &isActive, &roleSlug, &roleLevel)
 
@@ -189,17 +192,17 @@ func (h *Handler) Register(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// Find valid invite
+	// Find valid invite and get role_id
 	var inviteID int
-	var email, roleName string
-	var roleLevel int
-	var createdBy *int
+	var email string
+	var roleID, roleLevel int
+	var roleName string
 	err := h.db.QueryRow(ctx, `
-		SELECT i.id, i.email, i.role_level, i.created_by, r.slug
+		SELECT i.id, i.email, r.id, r.level, r.slug
 		FROM invites i
 		JOIN roles r ON r.level = i.role_level
 		WHERE i.token = $1 AND i.used_at IS NULL AND i.expires_at > NOW()
-	`, body.Token).Scan(&inviteID, &email, &roleLevel, &createdBy, &roleName)
+	`, body.Token).Scan(&inviteID, &email, &roleID, &roleLevel, &roleName)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "Приглашение не найдено или истекло"})
 		return
@@ -220,14 +223,23 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
+	// Parse name
+	nameParts := strings.SplitN(strings.TrimSpace(body.Name), " ", 2)
+	firstName := nameParts[0]
+	lastName := ""
+	if len(nameParts) > 1 {
+		lastName = nameParts[1]
+	}
+
 	// Create user
-	var userID int
+	var userID string
 	err = h.db.QueryRow(ctx, `
-		INSERT INTO users (email, password_hash, name, role, role_level, is_active, invited_by)
-		VALUES ($1, $2, $3, $4, $5, true, $6)
+		INSERT INTO users (email, password_hash, first_name, last_name, role_id, is_active)
+		VALUES ($1, $2, $3, $4, $5, true)
 		RETURNING id
-	`, email, string(hash), strings.TrimSpace(body.Name), roleName, roleLevel, createdBy).Scan(&userID)
+	`, email, string(hash), firstName, lastName, roleID).Scan(&userID)
 	if err != nil {
+		log.Printf("Register: insert user error: %v", err)
 		c.JSON(500, gin.H{"error": "Ошибка создания пользователя"})
 		return
 	}
@@ -264,7 +276,7 @@ func (h *Handler) Register(c *gin.Context) {
 
 	// Build JWT
 	tokenStr, _ := middleware.GenerateToken(middleware.Claims{
-		UserID: fmt.Sprintf("%d", userID),
+		UserID: userID,
 		Email:  email,
 		Role:   roleName,
 		Level:  roleLevel,
@@ -274,17 +286,10 @@ func (h *Handler) Register(c *gin.Context) {
 	h.db.Exec(ctx, `INSERT INTO audit_log (user_id, action, details, ip_address) VALUES ($1,'user.registered',$2,$3)`,
 		userID, fmt.Sprintf(`{"invite_id":%d}`, inviteID), c.ClientIP())
 
-	nameParts := strings.SplitN(strings.TrimSpace(body.Name), " ", 2)
-	firstName := nameParts[0]
-	lastName := ""
-	if len(nameParts) > 1 {
-		lastName = nameParts[1]
-	}
-
 	c.JSON(200, gin.H{
 		"token": tokenStr,
 		"user": gin.H{
-			"id":         fmt.Sprintf("%d", userID),
+			"id":         userID,
 			"email":      email,
 			"first_name": firstName,
 			"last_name":  lastName,
@@ -359,11 +364,12 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 	extMap := map[string]string{
 		"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
 	}
-	ext, ok := extMap[ct]
-	if !ok {
+	// Предварительная проверка Content-Type (финальная по magic bytes)
+	if _, ok := extMap[ct]; !ok {
 		c.JSON(400, gin.H{"error": "Допустимы: JPEG, PNG, WebP, GIF"})
 		return
 	}
+	var ext string
 
 	src, err := file.Open()
 	if err != nil {
@@ -372,23 +378,71 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 	}
 	defer src.Close()
 
-	buf := make([]byte, file.Size)
-	src.Read(buf)
+	// Полное чтение файла
+	buf, err := io.ReadAll(src)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Ошибка чтения файла"})
+		return
+	}
+
+	// Валидация magic bytes
+	if !isValidImage(buf) {
+		c.JSON(400, gin.H{"error": "Файл не является изображением"})
+		return
+	}
+
+	// Определяем расширение по содержимому
+	ext = detectImageExt(buf)
+	if ext == "" {
+		c.JSON(400, gin.H{"error": "Допустимы: JPEG, PNG, WebP, GIF"})
+		return
+	}
 
 	// Random filename
 	rnd := make([]byte, 16)
 	rand.Read(rnd)
 	filename := fmt.Sprintf("%x.%s", rnd, ext)
 
-	avatarsDir := "public/avatars"
+	avatarsDir := "/var/www/sportdata/uploads/avatars"
 	os.MkdirAll(avatarsDir, 0755)
 	if err := os.WriteFile(filepath.Join(avatarsDir, filename), buf, 0644); err != nil {
 		c.JSON(500, gin.H{"error": "Ошибка сохранения"})
 		return
 	}
 
-	avatarURL := "/avatars/" + filename
+	avatarURL := "/uploads/avatars/" + filename
 	h.db.Exec(c.Request.Context(), `UPDATE users SET avatar_url=$1, updated_at=NOW() WHERE id=$2`, avatarURL, userID)
 
 	c.JSON(200, gin.H{"avatar_url": avatarURL})
+}
+
+// Magic bytes для изображений
+var imageMagic = map[string][]byte{
+	"jpg":  {0xFF, 0xD8, 0xFF},
+	"png":  {0x89, 0x50, 0x4E, 0x47},
+	"gif":  {0x47, 0x49, 0x46, 0x38},
+	"webp": {0x52, 0x49, 0x46, 0x46},
+}
+
+func isValidImage(data []byte) bool {
+	return detectImageExt(data) != ""
+}
+
+func detectImageExt(data []byte) string {
+	if len(data) < 12 {
+		return ""
+	}
+	if bytes.HasPrefix(data, imageMagic["jpg"]) {
+		return "jpg"
+	}
+	if bytes.HasPrefix(data, imageMagic["png"]) {
+		return "png"
+	}
+	if bytes.HasPrefix(data, imageMagic["gif"]) {
+		return "gif"
+	}
+	if bytes.HasPrefix(data, imageMagic["webp"]) && string(data[8:12]) == "WEBP" {
+		return "webp"
+	}
+	return ""
 }
