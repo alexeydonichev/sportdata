@@ -134,7 +134,11 @@ func (h *Handler) CreateUser(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	hash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ошибка хэширования пароля"})
+		return
+	}
 
 	tx, err := h.db.Begin(ctx)
 	if err != nil {

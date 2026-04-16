@@ -117,7 +117,7 @@ class ApiClient {
     if (params.search) qs.set("search", params.search);
     if (params.sort) qs.set("sort", params.sort);
     if (params.order) qs.set("order", params.order);
-    return this.request<Product[]>("/api/v1/products?" + qs.toString());
+    return this.request<{items: Product[]; total: number}>("/api/v1/products?" + qs.toString()).then(r => r.items);
   }
 
   sales(params: { period?: string; category?: string; marketplace?: string; page?: number; limit?: number } = {}) {
