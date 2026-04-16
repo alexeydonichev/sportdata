@@ -72,7 +72,9 @@ func (h *Handler) GetPnLFull(c *gin.Context) {
 		COALESCE(SUM(CASE WHEN s.quantity > 0 THEN COALESCE(p.cost_price,0) * s.quantity ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN s.quantity < 0 THEN ABS(s.revenue) ELSE 0 END), 0)
 		%s %s`, j, pw)
-	_ = h.db.QueryRow(ctx, pq, pa...).Scan(&prevGrossRev, &prevNetProf, &prevComm, &prevLogi, &prevCogs, &prevReturns)
+	if err := h.db.QueryRow(ctx, pq, pa...).Scan(&prevGrossRev, &prevNetProf, &prevComm, &prevLogi, &prevCogs, &prevReturns); err != nil {
+		/* prev period unavailable */
+	}
 
 	prevNetRev := prevGrossRev - prevReturns
 	prevGrossProfit := prevNetRev - prevCogs
@@ -80,7 +82,9 @@ func (h *Handler) GetPnLFull(c *gin.Context) {
 
 	var activeSKUs int
 	skuQ := fmt.Sprintf(`SELECT COUNT(DISTINCT p.id) %s %s AND s.quantity > 0`, j, w)
-	_ = h.db.QueryRow(ctx, skuQ, a...).Scan(&activeSKUs)
+	if err := h.db.QueryRow(ctx, skuQ, a...).Scan(&activeSKUs); err != nil {
+		activeSKUs = 0
+	}
 
 	dq := fmt.Sprintf(`SELECT s.sale_date,
 		COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue ELSE 0 END), 0),

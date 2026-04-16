@@ -51,7 +51,9 @@ func (h *Handler) GetSales(c *gin.Context) {
 
 	var total int
 	countQ := fmt.Sprintf(`SELECT COUNT(*) %s %s`, joinClause, where)
-	_ = h.db.QueryRow(ctx, countQ, args...).Scan(&total)
+	if err := h.db.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+		total = 0
+	}
 
 	pages := int(math.Ceil(float64(total) / float64(limit)))
 	if pages < 1 {

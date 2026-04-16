@@ -40,7 +40,9 @@ func (h *Handler) GetUnitEconomicsFull(c *gin.Context) {
 
 	var total int
 	cntQ := fmt.Sprintf("SELECT COUNT(DISTINCT p.id) %s %s AND s.quantity > 0", j, w)
-	_ = h.db.QueryRow(ctx, cntQ, a...).Scan(&total)
+	if err := h.db.QueryRow(ctx, cntQ, a...).Scan(&total); err != nil {
+		total = 0
+	}
 
 	q := fmt.Sprintf(`SELECT p.id, p.sku, p.name, COALESCE(c.name,''),
 		COALESCE(p.cost_price, 0),

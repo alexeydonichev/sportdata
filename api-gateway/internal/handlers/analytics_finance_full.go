@@ -63,7 +63,9 @@ func (h *Handler) GetFinanceFull(c *gin.Context) {
 		COALESCE(SUM(s.commission), 0),
 		COALESCE(SUM(s.logistics_cost), 0)
 		%s %s`, j, pw)
-	_ = h.db.QueryRow(ctx, pq, pa...).Scan(&prevGrossRev, &prevNetProf, &prevComm, &prevLogi)
+	if err := h.db.QueryRow(ctx, pq, pa...).Scan(&prevGrossRev, &prevNetProf, &prevComm, &prevLogi); err != nil {
+		/* prev period unavailable */
+	}
 
 	wq := fmt.Sprintf(`SELECT date_trunc('week', s.sale_date)::date,
 		COALESCE(SUM(CASE WHEN s.quantity > 0 THEN s.revenue ELSE 0 END), 0),

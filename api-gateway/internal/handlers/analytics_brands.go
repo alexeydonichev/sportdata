@@ -49,7 +49,9 @@ func (h *Handler) GetBrandsAnalytics(c *gin.Context) {
 		var nm string
 		var rev, profit float64
 		var qty, products, ret int
-		_ = rows.Scan(&nm, &rev, &qty, &profit, &products, &ret)
+		if err := rows.Scan(&nm, &rev, &qty, &profit, &products, &ret); err != nil {
+			continue
+		}
 		totalRev += rev
 		margin := 0.0
 		if rev > 0 {

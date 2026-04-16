@@ -4,48 +4,67 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"io"
 	"strings"
 )
 
+func deriveKey(key string) []byte {
+	h := sha256.Sum256([]byte(key))
+	return h[:]
+}
+
 func Encrypt(plaintext, key string) (string, error) {
 	plaintext = strings.TrimSpace(plaintext)
-	keyBytes := padKey([]byte(key))
-	block, err := aes.NewCipher(keyBytes)
+	block, err := aes.NewCipher(deriveKey(key))
 	if err != nil {
 		return "", err
 	}
-	plainBytes := []byte(plaintext)
-	ciphertext := make([]byte, aes.BlockSize+len(plainBytes))
-	iv := ciphertext[:aes.BlockSize]
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
 		return "", err
 	}
-	stream := cipher.NewCFBEncrypter(block, iv)
-	stream.XORKeyStream(ciphertext[aes.BlockSize:], plainBytes)
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
 func Decrypt(encrypted, key string) (string, error) {
-	keyBytes := padKey([]byte(key))
-	ciphertext, err := base64.StdEncoding.DecodeString(encrypted)
+	data, err := base64.StdEncoding.DecodeString(encrypted)
 	if err != nil {
 		return "", err
 	}
-	block, err := aes.NewCipher(keyBytes)
+
+	block, err := aes.NewCipher(deriveKey(key))
 	if err != nil {
 		return "", err
 	}
-	if len(ciphertext) < aes.BlockSize {
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
 		return "", errors.New("ciphertext too short")
 	}
-	iv := ciphertext[:aes.BlockSize]
-	ciphertext = ciphertext[aes.BlockSize:]
-	stream := cipher.NewCFBDecrypter(block, iv)
-	stream.XORKeyStream(ciphertext, ciphertext)
-	return strings.TrimSpace(string(ciphertext)), nil
+
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
 }
 
 func Hint(apiKey string) string {
@@ -53,16 +72,4 @@ func Hint(apiKey string) string {
 		return "****"
 	}
 	return apiKey[:4] + "..." + apiKey[len(apiKey)-4:]
-}
-
-func padKey(key []byte) []byte {
-	if len(key) == 32 {
-		return key
-	}
-	if len(key) < 32 {
-		padded := make([]byte, 32)
-		copy(padded, key)
-		return padded
-	}
-	return key[:32]
 }

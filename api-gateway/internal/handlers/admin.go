@@ -452,19 +452,29 @@ func (h *Handler) GetSystemInfo(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	var dbSize string
-	_ = h.db.QueryRow(ctx, "SELECT pg_size_pretty(pg_database_size(current_database()))").Scan(&dbSize)
+	if err := h.db.QueryRow(ctx, "SELECT pg_size_pretty(pg_database_size(current_database()))").Scan(&dbSize); err != nil {
+		dbSize = "unknown"
+	}
 
 	var tableCount int
-	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'").Scan(&tableCount)
+	if err := h.db.QueryRow(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'").Scan(&tableCount); err != nil {
+		tableCount = 0
+	}
 
 	var userCount int
-	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&userCount)
+	if err := h.db.QueryRow(ctx, "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL").Scan(&userCount); err != nil {
+		userCount = 0
+	}
 
 	var productCount int
-	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM products").Scan(&productCount)
+	if err := h.db.QueryRow(ctx, "SELECT COUNT(*) FROM products").Scan(&productCount); err != nil {
+		productCount = 0
+	}
 
 	var salesCount int64
-	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM sales").Scan(&salesCount)
+	if err := h.db.QueryRow(ctx, "SELECT COUNT(*) FROM sales").Scan(&salesCount); err != nil {
+		salesCount = 0
+	}
 
 	c.JSON(200, gin.H{
 		"db_size":       dbSize,

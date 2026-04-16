@@ -197,7 +197,9 @@ func (h *Handler) ExportAnalytics(c *gin.Context) {
 		FROM sales WHERE sale_date >= NOW() - INTERVAL '1 day' * $1`, days)
 	var rev, avg float64
 	var cnt int
-	_ = row.Scan(&rev, &cnt, &avg)
+	if err := row.Scan(&rev, &cnt, &avg); err != nil {
+		/* export scan failed */
+	}
 	if format == "json" {
 		c.JSON(200, gin.H{"period": periodLabel(period), "revenue": rev, "orders": cnt, "avg": avg})
 		return

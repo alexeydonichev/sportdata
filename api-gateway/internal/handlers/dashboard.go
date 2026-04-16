@@ -42,11 +42,15 @@ func (h *Handler) GetDashboard(c *gin.Context) {
 		COALESCE(SUM(s.net_profit),0), COALESCE(SUM(s.commission),0),
 		COALESCE(SUM(s.logistics_cost),0), COALESCE(SUM(s.quantity),0),
 		COUNT(*) %s %s`, j, pw)
-	_ = h.db.QueryRow(ctx, pq, pa...).Scan(
-		&prevRev, &prevProf, &prevComm, &prevLogi, &prevQty, &prevCnt)
+	if err := h.db.QueryRow(ctx, pq, pa...).Scan(
+		&prevRev, &prevProf, &prevComm, &prevLogi, &prevQty, &prevCnt); err != nil {
+		/* prev period unavailable */
+	}
 
 	var totalSKU int
-	_ = h.db.QueryRow(ctx, "SELECT COUNT(*) FROM products WHERE is_active=true").Scan(&totalSKU)
+	if err := h.db.QueryRow(ctx, "SELECT COUNT(*) FROM products WHERE is_active=true").Scan(&totalSKU); err != nil {
+		totalSKU = 0
+	}
 
 	margin := pct(prof, rev)
 	avgOrd := div(rev, float64(cnt))

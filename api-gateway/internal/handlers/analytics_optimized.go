@@ -139,7 +139,9 @@ func (h *Handler) GetAnalyticsOptimized(c *gin.Context) {
 		defer wg.Done()
 		q := buildQ("SELECT COALESCE(SUM(s.revenue),0), COALESCE(SUM(s.net_profit),0), COALESCE(SUM(s.commission),0), COALESCE(SUM(s.logistics_cost),0), COALESCE(SUM(p.cost_price * s.quantity),0)", j, w, "")
 		var totRev, totProf, totComm, totLogi, totCost float64
-		_ = h.db.QueryRow(ctx, q, a...).Scan(&totRev, &totProf, &totComm, &totLogi, &totCost)
+		if err := h.db.QueryRow(ctx, q, a...).Scan(&totRev, &totProf, &totComm, &totLogi, &totCost); err != nil {
+			/* costs query failed */
+		}
 		mu.Lock()
 		costs = gin.H{
 			"total_revenue":  round2(totRev),

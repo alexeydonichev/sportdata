@@ -24,7 +24,6 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 		catF = fmt.Sprintf("AND c.slug=$%d", len(params))
 	}
 
-	// Current period sales
 	var totalSales int
 	var totalRevenue, totalProfit float64
 	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
@@ -33,7 +32,6 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 		WHERE s.sale_date>=CURRENT_DATE-$1::int AND s.quantity>0 %s
 	`, catF), params...).Scan(&totalSales, &totalRevenue, &totalProfit)
 
-	// Current period returns
 	var curReturns int
 	var curRetAmount, curLogCost float64
 	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
@@ -42,7 +40,6 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 		WHERE r.return_date>=CURRENT_DATE-$1::int %s
 	`, catF), params...).Scan(&curReturns, &curRetAmount, &curLogCost)
 
-	// Previous period
 	var prevReturns int
 	var prevRetAmount float64
 	var prevSales int
@@ -71,7 +68,6 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 	}
 	lostProfit := avgProfit * float64(curReturns)
 
-	// Daily
 	dRows, _ := h.db.Query(ctx, fmt.Sprintf(`
 		WITH ds AS (
 			SELECT s.sale_date AS d, COALESCE(SUM(s.quantity),0)::int AS sales
@@ -85,23 +81,24 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 		SELECT COALESCE(ds.d,dr.d)::text, COALESCE(ds.sales,0), COALESCE(dr.returns,0)
 		FROM ds FULL OUTER JOIN dr ON ds.d=dr.d ORDER BY 1
 	`, catF, catF), params...)
-	defer dRows.Close()
 	var daily []gin.H
-	for dRows.Next() {
-		var dt string
-		var s, r int
-		dRows.Scan(&dt, &s, &r)
-		rr := 0.0
-		if (s + r) > 0 {
-			rr = round2(float64(r) / float64(s+r) * 100)
+	if dRows != nil {
+		defer dRows.Close()
+		for dRows.Next() {
+			var dt string
+			var s, r int
+			dRows.Scan(&dt, &s, &r)
+			rr := 0.0
+			if (s + r) > 0 {
+				rr = round2(float64(r) / float64(s+r) * 100)
+			}
+			daily = append(daily, gin.H{"date": dt, "sales": s, "returns": r, "return_rate": rr})
 		}
-		daily = append(daily, gin.H{"date": dt, "sales": s, "returns": r, "return_rate": rr})
 	}
 	if daily == nil {
 		daily = []gin.H{}
 	}
 
-	// By product
 	pRows, _ := h.db.Query(ctx, `
 		WITH ps AS (
 			SELECT product_id, SUM(quantity)::int AS sq, SUM(revenue)::float8 AS sa
@@ -117,28 +114,29 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 		LEFT JOIN ps ON ps.product_id=p.id
 		ORDER BY pr.rq DESC LIMIT 50
 	`, days)
-	defer pRows.Close()
 	var byProduct []gin.H
-	for pRows.Next() {
-		var pid int
-		var nm, sku, cat string
-		var sq, rq int
-		var ra float64
-		pRows.Scan(&pid, &nm, &sku, &cat, &sq, &rq, &ra)
-		rr := 0.0
-		if (sq + rq) > 0 {
-			rr = round2(float64(rq) / float64(sq+rq) * 100)
+	if pRows != nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var pid int
+			var nm, sku, cat string
+			var sq, rq int
+			var ra float64
+			pRows.Scan(&pid, &nm, &sku, &cat, &sq, &rq, &ra)
+			rr := 0.0
+			if (sq + rq) > 0 {
+				rr = round2(float64(rq) / float64(sq+rq) * 100)
+			}
+			byProduct = append(byProduct, gin.H{
+				"product_id": pid, "name": nm, "sku": sku, "category": cat,
+				"sales_qty": sq, "return_qty": rq, "return_rate": rr, "return_amount": round2(ra),
+			})
 		}
-		byProduct = append(byProduct, gin.H{
-			"product_id": pid, "name": nm, "sku": sku, "category": cat,
-			"sales_qty": sq, "return_qty": rq, "return_rate": rr, "return_amount": round2(ra),
-		})
 	}
 	if byProduct == nil {
 		byProduct = []gin.H{}
 	}
 
-	// By category
 	catRows, _ := h.db.Query(ctx, `
 		WITH cs AS (
 			SELECT p.category_id, SUM(s.quantity)::int AS sq
@@ -154,38 +152,41 @@ func (h *Handler) GetReturnsAnalytics(c *gin.Context) {
 		LEFT JOIN cs ON cs.category_id=cr.category_id
 		ORDER BY cr.rq DESC
 	`, days)
-	defer catRows.Close()
 	var byCategory []gin.H
-	for catRows.Next() {
-		var cn string
-		var sq, rq int
-		var ra float64
-		catRows.Scan(&cn, &sq, &rq, &ra)
-		rr := 0.0
-		if (sq + rq) > 0 {
-			rr = round2(float64(rq) / float64(sq+rq) * 100)
+	if catRows != nil {
+		defer catRows.Close()
+		for catRows.Next() {
+			var cn string
+			var sq, rq int
+			var ra float64
+			catRows.Scan(&cn, &sq, &rq, &ra)
+			rr := 0.0
+			if (sq + rq) > 0 {
+				rr = round2(float64(rq) / float64(sq+rq) * 100)
+			}
+			byCategory = append(byCategory, gin.H{"category": cn, "sales_qty": sq, "return_qty": rq, "return_rate": rr, "return_amount": round2(ra)})
 		}
-		byCategory = append(byCategory, gin.H{"category": cn, "sales_qty": sq, "return_qty": rq, "return_rate": rr, "return_amount": round2(ra)})
 	}
 	if byCategory == nil {
 		byCategory = []gin.H{}
 	}
 
-	// By warehouse
 	whRows, _ := h.db.Query(ctx, fmt.Sprintf(`
 		SELECT COALESCE(r.warehouse,'Unknown'), COALESCE(SUM(r.quantity),0)::int, COALESCE(SUM(r.return_amount),0)::float8
 		FROM returns r JOIN products p ON p.id=r.product_id LEFT JOIN categories c ON c.id=p.category_id
 		WHERE r.return_date>=CURRENT_DATE-$1::int %s
 		GROUP BY r.warehouse ORDER BY SUM(r.quantity) DESC
 	`, catF), params...)
-	defer whRows.Close()
 	var byWarehouse []gin.H
-	for whRows.Next() {
-		var wh string
-		var rq int
-		var ra float64
-		whRows.Scan(&wh, &rq, &ra)
-		byWarehouse = append(byWarehouse, gin.H{"warehouse": wh, "return_qty": rq, "return_amount": round2(ra)})
+	if whRows != nil {
+		defer whRows.Close()
+		for whRows.Next() {
+			var wh string
+			var rq int
+			var ra float64
+			whRows.Scan(&wh, &rq, &ra)
+			byWarehouse = append(byWarehouse, gin.H{"warehouse": wh, "return_qty": rq, "return_amount": round2(ra)})
+		}
 	}
 	if byWarehouse == nil {
 		byWarehouse = []gin.H{}

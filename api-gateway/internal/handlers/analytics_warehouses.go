@@ -47,7 +47,9 @@ func (h *Handler) GetWarehousesAnalytics(c *gin.Context) {
 		var nm string
 		var rev, profit float64
 		var qty, ret int
-		_ = rows.Scan(&nm, &rev, &qty, &profit, &ret)
+		if err := rows.Scan(&nm, &rev, &qty, &profit, &ret); err != nil {
+			continue
+		}
 		totalRev += rev
 		rr := 0.0
 		if (qty + ret) > 0 {

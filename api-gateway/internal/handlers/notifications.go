@@ -92,7 +92,9 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 		LIMIT 20
 	`)
 	if salesRows != nil {
+		if salesRows != nil {
 		defer salesRows.Close()
+	}
 		for salesRows.Next() {
 			var pid, name, sku string
 			var curQty, prevQty int
@@ -155,7 +157,9 @@ func (h *Handler) GetNotifications(c *gin.Context) {
 		LIMIT 10
 	`)
 	if retRows != nil {
+		if retRows != nil {
 		defer retRows.Close()
+	}
 		for retRows.Next() {
 			var pid, name, sku string
 			var sold, returned int

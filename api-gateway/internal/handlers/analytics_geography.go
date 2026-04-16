@@ -47,20 +47,24 @@ func (h *Handler) GetGeography(c *gin.Context) {
 	`, catF, mpF)
 
 	cRows, _ := h.db.Query(ctx, cq, params...)
-	defer cRows.Close()
 	var byCountry []gin.H
 	var totalRev float64
-	for cRows.Next() {
-		var country string
-		var rev float64
-		var qty, orders, returns int
-		_ = cRows.Scan(&country, &rev, &qty, &orders, &returns)
-		rr := 0.0
-		if (qty + returns) > 0 {
-			rr = round2(float64(returns) / float64(qty+returns) * 100)
+	if cRows != nil {
+		defer cRows.Close()
+		for cRows.Next() {
+			var country string
+			var rev float64
+			var qty, orders, returns int
+			if err := cRows.Scan(&country, &rev, &qty, &orders, &returns); err != nil {
+				continue
+			}
+			rr := 0.0
+			if (qty + returns) > 0 {
+				rr = round2(float64(returns) / float64(qty+returns) * 100)
+			}
+			totalRev += rev
+			byCountry = append(byCountry, gin.H{"country": country, "revenue": round2(rev), "quantity": qty, "orders": orders, "returns": returns, "return_rate": rr})
 		}
-		totalRev += rev
-		byCountry = append(byCountry, gin.H{"country": country, "revenue": round2(rev), "quantity": qty, "orders": orders, "returns": returns, "return_rate": rr})
 	}
 	if byCountry == nil {
 		byCountry = []gin.H{}
@@ -81,14 +85,18 @@ func (h *Handler) GetGeography(c *gin.Context) {
 	`, catF, mpF)
 
 	wRows, _ := h.db.Query(ctx, wq, params...)
-	defer wRows.Close()
 	var byWarehouse []gin.H
-	for wRows.Next() {
-		var wh string
-		var rev float64
-		var qty, orders, returns int
-		_ = wRows.Scan(&wh, &rev, &qty, &orders, &returns)
-		byWarehouse = append(byWarehouse, gin.H{"warehouse": wh, "revenue": round2(rev), "quantity": qty, "orders": orders, "returns": returns})
+	if wRows != nil {
+		defer wRows.Close()
+		for wRows.Next() {
+			var wh string
+			var rev float64
+			var qty, orders, returns int
+			if err := wRows.Scan(&wh, &rev, &qty, &orders, &returns); err != nil {
+				continue
+			}
+			byWarehouse = append(byWarehouse, gin.H{"warehouse": wh, "revenue": round2(rev), "quantity": qty, "orders": orders, "returns": returns})
+		}
 	}
 	if byWarehouse == nil {
 		byWarehouse = []gin.H{}

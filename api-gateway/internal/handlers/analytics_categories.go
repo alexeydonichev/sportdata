@@ -51,7 +51,9 @@ func (h *Handler) GetCategoriesAnalytics(c *gin.Context) {
 		var nm, slug string
 		var rev, profit float64
 		var qty, products, ret int
-		_ = rows.Scan(&nm, &slug, &rev, &qty, &profit, &products, &ret)
+		if err := rows.Scan(&nm, &slug, &rev, &qty, &profit, &products, &ret); err != nil {
+			continue
+		}
 		totalRev += rev
 		margin := 0.0
 		if rev > 0 {

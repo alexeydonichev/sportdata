@@ -80,7 +80,9 @@ func (h *Handler) GetProductsAnalytics(c *gin.Context) {
 		var nm, sku, brand, cat string
 		var rev, profit float64
 		var qty, orders, ret int
-		rows.Scan(&pid, &nm, &sku, &brand, &cat, &rev, &qty, &profit, &orders, &ret)
+		if err := rows.Scan(&pid, &nm, &sku, &brand, &cat, &rev, &qty, &profit, &orders, &ret); err != nil {
+			continue
+		}
 		margin := 0.0
 		if rev > 0 {
 			margin = profit / rev * 100
@@ -106,14 +108,16 @@ func (h *Handler) GetProductsAnalytics(c *gin.Context) {
 
 	// Summary
 	var totalProducts int
-	_ = h.db.QueryRow(ctx, fmt.Sprintf(`
+	if err := h.db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(DISTINCT s.product_id)
 		FROM sales s
 		JOIN marketplaces mp ON mp.id=s.marketplace_id
 		JOIN products p ON p.id=s.product_id
 		LEFT JOIN categories c ON c.id=p.category_id
 		WHERE s.sale_date>=CURRENT_DATE-$1::int AND s.quantity>0 %s %s
-	`, catF, mpF), params...).Scan(&totalProducts)
+	`, catF, mpF), params...).Scan(&totalProducts); err != nil {
+		totalProducts = 0
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"period":         period,
