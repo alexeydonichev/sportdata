@@ -28,3 +28,7 @@ audit.txt
 *.save
 api-gateway/bin/
 *.patch
+
+# Backup files
+*.bak
+coverage.out
