@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-
 	"sportdata-etl/internal/models"
 )
 
@@ -25,17 +24,30 @@ func (p *Provider) MarketplaceSlug() string { return "wildberries" }
 
 func (p *Provider) SyncSales(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error) {
 	client := NewClient(apiKey)
+
+	var lastSaleDate *time.Time
+	err := p.db.QueryRow(ctx, "SELECT MAX(sale_dt) FROM wb_sales WHERE credential_id = $1", cred.ID).Scan(&lastSaleDate)
+	if err == nil && lastSaleDate != nil {
+		incrementalFrom := lastSaleDate.AddDate(0, 0, -3)
+		if incrementalFrom.After(dateFrom) {
+			dateFrom = incrementalFrom
+			log.Printf("[wb] Incremental sync from %s (last sale: %s)", dateFrom.Format("2006-01-02"), lastSaleDate.Format("2006-01-02"))
+		}
+	} else {
+		log.Printf("[wb] Full sync (no previous data for credential %d)", cred.ID)
+	}
+
 	log.Printf("[wb] Fetching sales: %s to %s", dateFrom.Format("2006-01-02"), dateTo.Format("2006-01-02"))
 	items, err := client.GetReportDetailByWeeks(dateFrom, dateTo)
 	if err != nil {
 		return 0, fmt.Errorf("fetch: %w", err)
 	}
 	if len(items) == 0 {
+		log.Printf("[wb] No new items from API")
 		return 0, nil
 	}
 	log.Printf("[wb] Got %d items from API", len(items))
-	
-	// Дедупликация по srid+sale_dt
+
 	seen := make(map[string]bool)
 	unique := make([]ReportDetailItem, 0, len(items))
 	for _, it := range items {
@@ -56,7 +68,7 @@ func (p *Provider) SyncSales(ctx context.Context, cred *models.Credential, apiKe
 		}
 	}
 	log.Printf("[wb] After dedup: %d unique items", len(unique))
-	
+
 	processed := 0
 	for i := 0; i < len(unique); i += 500 {
 		end := i + 500
@@ -96,8 +108,8 @@ func (p *Provider) insertWbSalesBatch(ctx context.Context, items []ReportDetailI
 			sb.WriteString(",")
 		}
 		sb.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-			idx+1,idx+2,idx+3,idx+4,idx+5,idx+6,idx+7,idx+8,idx+9,idx+10,idx+11,idx+12,idx+13,idx+14,idx+15,idx+16,idx+17,idx+18,idx+19,idx+20,idx+21,idx+22,idx+23,idx+24,idx+25,idx+26,idx+27,idx+28,idx+29,idx+30,idx+31,idx+32,idx+33,idx+34,idx+35,idx+36,idx+37,idx+38,idx+39,idx+40,idx+41,idx+42,idx+43,idx+44,idx+45,idx+46,idx+47,idx+48,idx+49,idx+50,idx+51,idx+52,idx+53,idx+54,idx+55))
-		args = append(args, nz(it.RRDtID),ne(it.SRId),nz(it.RID),nz(it.GiID),nz(it.ShkID),sd,pt(it.OrderDt),pt(it.RRDt),pt(it.CreateDt),nz(it.NmId),ne(it.SAName),ne(it.Barcode),ne(it.BrandName),ne(it.SubjectName),ne(it.TSName),ne(it.DocTypeName),ne(it.SupplierOperName),it.Quantity,it.RetailPrice,it.RetailAmount,it.RetailPriceWithDisc,it.SalePercent,it.CommissionPercent,it.PPVZSppPrc,it.PPVZKVWPrc,it.PPVZKVWPrcBase,it.PPVZSalesCommission,it.PPVZForPay,it.PPVZReward,it.PPVZVW,it.PPVZVWNDS,it.AcquiringFee,it.AcquiringPercent,ne(it.AcquiringBank),it.DeliveryAmount,it.ReturnAmount,it.DeliveryRub,it.RebillLogisticCost,it.Penalty,it.AdditionalPayment,it.Deduction,it.StorageFee,it.Acceptance,ne(it.CountryName),ne(it.OblastOkrugName),ne(it.RegionName),ne(it.OfficeName),nz(it.PPVZOfficeID),ne(it.PPVZOfficeName),nz(it.PPVZSupplierID),ne(it.PPVZSupplierName),ne(it.PPVZINN),ne(it.StickCode),ne(it.Kiz),credID)
+			idx+1, idx+2, idx+3, idx+4, idx+5, idx+6, idx+7, idx+8, idx+9, idx+10, idx+11, idx+12, idx+13, idx+14, idx+15, idx+16, idx+17, idx+18, idx+19, idx+20, idx+21, idx+22, idx+23, idx+24, idx+25, idx+26, idx+27, idx+28, idx+29, idx+30, idx+31, idx+32, idx+33, idx+34, idx+35, idx+36, idx+37, idx+38, idx+39, idx+40, idx+41, idx+42, idx+43, idx+44, idx+45, idx+46, idx+47, idx+48, idx+49, idx+50, idx+51, idx+52, idx+53, idx+54, idx+55))
+		args = append(args, nz(it.RRDtID), ne(it.SRId), nz(it.RID), nz(it.GiID), nz(it.ShkID), sd, pt(it.OrderDt), pt(it.RRDt), pt(it.CreateDt), nz(it.NmId), ne(it.SAName), ne(it.Barcode), ne(it.BrandName), ne(it.SubjectName), ne(it.TSName), ne(it.DocTypeName), ne(it.SupplierOperName), it.Quantity, it.RetailPrice, it.RetailAmount, it.RetailPriceWithDisc, it.SalePercent, it.CommissionPercent, it.PPVZSppPrc, it.PPVZKVWPrc, it.PPVZKVWPrcBase, it.PPVZSalesCommission, it.PPVZForPay, it.PPVZReward, it.PPVZVW, it.PPVZVWNDS, it.AcquiringFee, it.AcquiringPercent, ne(it.AcquiringBank), it.DeliveryAmount, it.ReturnAmount, it.DeliveryRub, it.RebillLogisticCost, it.Penalty, it.AdditionalPayment, it.Deduction, it.StorageFee, it.Acceptance, ne(it.CountryName), ne(it.OblastOkrugName), ne(it.RegionName), ne(it.OfficeName), nz(it.PPVZOfficeID), ne(it.PPVZOfficeName), nz(it.PPVZSupplierID), ne(it.PPVZSupplierName), ne(it.PPVZINN), ne(it.StickCode), ne(it.Kiz), credID)
 		idx += 55
 		cnt++
 	}
@@ -114,7 +126,7 @@ func (p *Provider) insertWbSalesBatch(ctx context.Context, items []ReportDetailI
 
 func (p *Provider) SyncStocks(ctx context.Context, cred *models.Credential, apiKey string) (int, error) {
 	client := NewClient(apiKey)
-	stocks, err := client.GetStocks(time.Now().AddDate(0,0,-1))
+	stocks, err := client.GetStocks(time.Now().AddDate(0, 0, -1))
 	if err != nil {
 		return 0, err
 	}
