@@ -18,8 +18,12 @@ func (h *Handler) GetProducts(c *gin.Context) {
 	order := c.DefaultQuery("order", "desc")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	if page < 1 { page = 1 }
-	if limit < 1 || limit > 100 { limit = 20 }
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
 	offset := (page - 1) * limit
 
 	dateFrom, dateTo := h.parsePeriod(period)
@@ -31,8 +35,12 @@ func (h *Handler) GetProducts(c *gin.Context) {
 		"margin": "margin", "orders": "orders",
 	}
 	col, ok := allowed[sortBy]
-	if !ok { col = "revenue" }
-	if order != "asc" { order = "desc" }
+	if !ok {
+		col = "revenue"
+	}
+	if order != "asc" {
+		order = "desc"
+	}
 
 	j := ` FROM sales s
 		LEFT JOIN products p ON p.id = s.product_id
@@ -54,11 +62,19 @@ func (h *Handler) GetProducts(c *gin.Context) {
 		COALESCE(SUM(s.net_profit),0) as profit,
 		COALESCE(SUM(s.quantity),0) as quantity,
 		COUNT(*) as orders,
-		CASE WHEN SUM(s.revenue)>0 THEN SUM(s.net_profit)/SUM(s.revenue)*100 ELSE 0 END as margin
+		CASE WHEN SUM(s.revenue)>0 THEN SUM(s.net_profit)/SUM(s.revenue)*100 ELSE 0 END as margin,
+		CASE WHEN SUM(s.quantity)>0 THEN SUM(s.revenue)/SUM(s.quantity) ELSE 0 END as avg_price,
+		COALESCE((SELECT SUM(quantity) FROM inventory WHERE product_id = p.id), 0) as stock_qty,
+		COALESCE((SELECT SUM(quantity) FROM returns WHERE product_id = p.id AND return_date >= $%d AND return_date <= $%d), 0) as returns_qty,
+		COALESCE((SELECT SUM(return_amount) FROM returns WHERE product_id = p.id AND return_date >= $%d AND return_date <= $%d), 0) as returns_amount
 		%s %s
 		GROUP BY p.id, p.sku, p.name
 		ORDER BY %s %s NULLS LAST
-		LIMIT %d OFFSET %d`, j, w, col, order, limit, offset)
+		LIMIT %d OFFSET %d`,
+		len(a)+1, len(a)+2, len(a)+3, len(a)+4,
+		j, w, col, order, limit, offset)
+
+	a = append(a, dateFrom, dateTo, dateFrom, dateTo)
 
 	rows, err := h.db.Query(ctx, q, a...)
 	if err != nil {
@@ -90,16 +106,27 @@ func (h *Handler) GetProducts(c *gin.Context) {
 	for rows.Next() {
 		var id int
 		var sku, name string
-		var rev, prof, marg float64
-		var qty, ord int
-		if rows.Scan(&id, &sku, &name, &rev, &prof, &qty, &ord, &marg) != nil {
+		var rev, prof, marg, avgPrice, retAmount float64
+		var qty, ord, stockQty, retQty int
+		if rows.Scan(&id, &sku, &name, &rev, &prof, &qty, &ord, &marg,
+			&avgPrice, &stockQty, &retQty, &retAmount) != nil {
 			continue
 		}
 		item := gin.H{
-			"product_id": id, "sku": sku, "name": name,
-			"revenue": round2(rev), "profit": round2(prof),
-			"quantity": qty, "orders": ord,
-			"margin_pct": round2(marg),
+			"product_id":     id,
+			"sku":            sku,
+			"name":           name,
+			"revenue":        round2(rev),
+			"profit":         round2(prof),
+			"quantity":       qty,
+			"orders":         ord,
+			"margin_pct":     round2(marg),
+			"price":          round2(avgPrice),
+			"avg_price":      round2(avgPrice),
+			"stock":          stockQty,
+			"stock_qty":      stockQty,
+			"returns_qty":    retQty,
+			"returns_amount": round2(retAmount),
 		}
 		if prev, ok := prevMap[id]; ok {
 			pr := prev["revenue"].(float64)
@@ -113,7 +140,9 @@ func (h *Handler) GetProducts(c *gin.Context) {
 		}
 		items = append(items, item)
 	}
-	if items == nil { items = []gin.H{} }
+	if items == nil {
+		items = []gin.H{}
+	}
 
 	totalPages := int(math.Ceil(float64(total) / float64(limit)))
 	c.JSON(200, gin.H{
@@ -169,11 +198,21 @@ func (h *Handler) GetProduct(c *gin.Context) {
 	mpNameStr := ""
 	mpIDVal := 0
 	costPriceVal := 0.0
-	if catName != nil { catNameStr = *catName }
-	if catID != nil { catIDVal = *catID }
-	if detectedMP != nil { mpNameStr = *detectedMP }
-	if detectedMPID != nil { mpIDVal = *detectedMPID }
-	if costPrice != nil { costPriceVal = *costPrice }
+	if catName != nil {
+		catNameStr = *catName
+	}
+	if catID != nil {
+		catIDVal = *catID
+	}
+	if detectedMP != nil {
+		mpNameStr = *detectedMP
+	}
+	if detectedMPID != nil {
+		mpIDVal = *detectedMPID
+	}
+	if costPrice != nil {
+		costPriceVal = *costPrice
+	}
 
 	c.JSON(200, gin.H{
 		"product_id": id, "sku": sku, "name": name,
