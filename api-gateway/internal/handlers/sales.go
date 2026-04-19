@@ -106,6 +106,21 @@ func (h *Handler) GetSales(c *gin.Context) {
 func (h *Handler) GetInventory(c *gin.Context) {
 	ctx := c.Request.Context()
 	categorySlug := c.Query("category")
+	marketplace := c.Query("marketplace")
+	period := c.Query("period")
+
+	// period → интервал для расчёта avg_daily_sales
+	periodInterval := "30 days"
+	switch period {
+	case "day", "1d":
+		periodInterval = "1 day"
+	case "week", "7d":
+		periodInterval = "7 days"
+	case "30d", "month":
+		periodInterval = "30 days"
+	case "90d", "quarter":
+		periodInterval = "90 days"
+	}
 
 	conditions := []string{}
 	args := []any{}
@@ -113,6 +128,14 @@ func (h *Handler) GetInventory(c *gin.Context) {
 	if categorySlug != "" && categorySlug != "all" {
 		conditions = append(conditions, fmt.Sprintf("c.slug = $%d", argN))
 		args = append(args, categorySlug)
+		argN++
+	}
+
+	// marketplace-фильтр применяется к подзапросу daily (а не к остаткам)
+	dailyMpFilter := ""
+	if marketplace != "" && marketplace != "all" {
+		dailyMpFilter = fmt.Sprintf("AND m.slug = $%d", argN)
+		args = append(args, marketplace)
 		argN++
 	}
 
@@ -133,15 +156,19 @@ func (h *Handler) GetInventory(c *gin.Context) {
 		LEFT JOIN categories c ON c.id = p.category_id
 		LEFT JOIN (
 			SELECT product_id, AVG(daily_qty) as avg_qty FROM (
-				SELECT product_id, SUM(quantity) as daily_qty
-				FROM sales WHERE quantity > 0 AND sale_date >= NOW() - INTERVAL '30 days'
-				GROUP BY product_id, sale_date
+				SELECT s.product_id, SUM(s.quantity) as daily_qty
+				FROM sales s
+				LEFT JOIN marketplaces m ON m.id = s.marketplace_id
+				WHERE s.quantity > 0
+				  AND s.sale_date >= NOW() - INTERVAL '%s'
+				  %s
+				GROUP BY s.product_id, s.sale_date
 			) d GROUP BY product_id
 		) daily ON daily.product_id = p.id
 		%s
 		ORDER BY CASE WHEN COALESCE(daily.avg_qty,0) > 0
 			THEN i.quantity / daily.avg_qty ELSE 9999 END ASC
-	`, where)
+	`, periodInterval, dailyMpFilter, where)
 
 	rows, err := h.db.Query(ctx, q, args...)
 	if err != nil {

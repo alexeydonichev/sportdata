@@ -65,7 +65,6 @@ func main() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	log.Printf("Scheduled sync every %v", interval)
-
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 

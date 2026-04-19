@@ -49,10 +49,13 @@ export default function GeographyPage() {
           <p className="text-sm text-text-tertiary mt-0.5">Продажи по странам, складам и ПВЗ</p>
         </div>
         <div className="flex items-center gap-3">
-          <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
-          <CategoryFilter value={category} onChange={setCategory} />
           <PeriodSelector value={period} onChange={setPeriod} />
         </div>
+      </div>
+
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
+        <MarketplaceFilter value={marketplace} onChange={setMarketplace} />
+        <CategoryFilter value={category} onChange={setCategory} />
       </div>
 
       {loading ? (

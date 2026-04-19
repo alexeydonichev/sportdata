@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"sportdata-etl/internal/models"
+	sync "sportdata-etl/internal/sync"
 )
 
 type Provider struct {
@@ -48,22 +49,14 @@ func (p *Provider) SyncSales(ctx context.Context, cred *models.Credential, apiKe
 	}
 	log.Printf("[wb] Got %d items from API", len(items))
 
-	seen := make(map[string]bool)
+	seen := make(map[int64]bool)
 	unique := make([]ReportDetailItem, 0, len(items))
 	for _, it := range items {
-		if it.SRId == "" {
+		if it.RrdID == 0 {
 			continue
 		}
-		sd := it.SaleDt
-		if sd == "" {
-			sd = it.RRDt
-		}
-		if len(sd) >= 10 {
-			sd = sd[:10]
-		}
-		key := it.SRId + "|" + sd
-		if !seen[key] {
-			seen[key] = true
+		if !seen[it.RrdID] {
+			seen[it.RrdID] = true
 			unique = append(unique, it)
 		}
 	}
@@ -109,14 +102,14 @@ func (p *Provider) insertWbSalesBatch(ctx context.Context, items []ReportDetailI
 		}
 		sb.WriteString(fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
 			idx+1, idx+2, idx+3, idx+4, idx+5, idx+6, idx+7, idx+8, idx+9, idx+10, idx+11, idx+12, idx+13, idx+14, idx+15, idx+16, idx+17, idx+18, idx+19, idx+20, idx+21, idx+22, idx+23, idx+24, idx+25, idx+26, idx+27, idx+28, idx+29, idx+30, idx+31, idx+32, idx+33, idx+34, idx+35, idx+36, idx+37, idx+38, idx+39, idx+40, idx+41, idx+42, idx+43, idx+44, idx+45, idx+46, idx+47, idx+48, idx+49, idx+50, idx+51, idx+52, idx+53, idx+54, idx+55))
-		args = append(args, nz(it.RRDtID), ne(it.SRId), nz(it.RID), nz(it.GiID), nz(it.ShkID), sd, pt(it.OrderDt), pt(it.RRDt), pt(it.CreateDt), nz(it.NmId), ne(it.SAName), ne(it.Barcode), ne(it.BrandName), ne(it.SubjectName), ne(it.TSName), ne(it.DocTypeName), ne(it.SupplierOperName), it.Quantity, it.RetailPrice, it.RetailAmount, it.RetailPriceWithDisc, it.SalePercent, it.CommissionPercent, it.PPVZSppPrc, it.PPVZKVWPrc, it.PPVZKVWPrcBase, it.PPVZSalesCommission, it.PPVZForPay, it.PPVZReward, it.PPVZVW, it.PPVZVWNDS, it.AcquiringFee, it.AcquiringPercent, ne(it.AcquiringBank), it.DeliveryAmount, it.ReturnAmount, it.DeliveryRub, it.RebillLogisticCost, it.Penalty, it.AdditionalPayment, it.Deduction, it.StorageFee, it.Acceptance, ne(it.CountryName), ne(it.OblastOkrugName), ne(it.RegionName), ne(it.OfficeName), nz(it.PPVZOfficeID), ne(it.PPVZOfficeName), nz(it.PPVZSupplierID), ne(it.PPVZSupplierName), ne(it.PPVZINN), ne(it.StickCode), ne(it.Kiz), credID)
+		args = append(args, nz(it.RrdID), ne(it.SRId), nz(it.RID), nz(it.GiID), nz(it.ShkID), sd, pt(it.OrderDt), pt(it.RRDt), pt(it.CreateDt), nz(it.NmId), ne(it.SAName), ne(it.Barcode), ne(it.BrandName), ne(it.SubjectName), ne(it.TSName), ne(it.DocTypeName), ne(it.SupplierOperName), it.Quantity, it.RetailPrice, it.RetailAmount, it.RetailPriceWithDisc, it.SalePercent, it.CommissionPercent, it.PPVZSppPrc, it.PPVZKVWPrc, it.PPVZKVWPrcBase, it.PPVZSalesCommission, it.PPVZForPay, it.PPVZReward, it.PPVZVW, it.PPVZVWNDS, it.AcquiringFee, it.AcquiringPercent, ne(it.AcquiringBank), it.DeliveryAmount, it.ReturnAmount, it.DeliveryRub, it.RebillLogisticCost, it.Penalty, it.AdditionalPayment, it.Deduction, it.StorageFee, it.Acceptance, ne(it.CountryName), ne(it.OblastOkrugName), ne(it.RegionName), ne(it.OfficeName), nz(it.PPVZOfficeID), ne(it.PPVZOfficeName), nz(it.PPVZSupplierID), ne(it.PPVZSupplierName), ne(it.PPVZINN), ne(it.StickCode), ne(it.Kiz), credID)
 		idx += 55
 		cnt++
 	}
 	if cnt == 0 {
 		return 0, nil
 	}
-	q := `INSERT INTO wb_sales(rrd_id,srid,rid,gi_id,shk_id,sale_dt,order_dt,rr_dt,create_dt,nm_id,supplier_article,barcode,brand,subject_name,ts_name,doc_type_name,supplier_oper_name,quantity,retail_price,retail_amount,retail_price_withdisc_rub,sale_percent,commission_percent,ppvz_spp_prc,ppvz_kvw_prc,ppvz_kvw_prc_base,ppvz_sales_commission,ppvz_for_pay,ppvz_reward,ppvz_vw,ppvz_vw_nds,acquiring_fee,acquiring_percent,acquiring_bank,delivery_amount,return_amount,delivery_rub,rebill_logistic_cost,penalty,additional_payment,deduction,storage_fee,acceptance,country_name,oblast_okrug_name,region_name,office_name,ppvz_office_id,ppvz_office_name,ppvz_supplier_id,ppvz_supplier_name,ppvz_inn,sticker_id,kiz,credential_id) VALUES ` + sb.String() + ` ON CONFLICT(srid,sale_dt) WHERE srid IS NOT NULL DO UPDATE SET quantity=EXCLUDED.quantity,retail_amount=EXCLUDED.retail_amount,ppvz_for_pay=EXCLUDED.ppvz_for_pay,ppvz_reward=EXCLUDED.ppvz_reward,delivery_rub=EXCLUDED.delivery_rub,penalty=EXCLUDED.penalty,updated_at=NOW()`
+	q := `INSERT INTO wb_sales(rrd_id,srid,rid,gi_id,shk_id,sale_dt,order_dt,rr_dt,create_dt,nm_id,supplier_article,barcode,brand,subject_name,ts_name,doc_type_name,supplier_oper_name,quantity,retail_price,retail_amount,retail_price_withdisc_rub,sale_percent,commission_percent,ppvz_spp_prc,ppvz_kvw_prc,ppvz_kvw_prc_base,ppvz_sales_commission,ppvz_for_pay,ppvz_reward,ppvz_vw,ppvz_vw_nds,acquiring_fee,acquiring_percent,acquiring_bank,delivery_amount,return_amount,delivery_rub,rebill_logistic_cost,penalty,additional_payment,deduction,storage_fee,acceptance,country_name,oblast_okrug_name,region_name,office_name,ppvz_office_id,ppvz_office_name,ppvz_supplier_id,ppvz_supplier_name,ppvz_inn,sticker_id,kiz,credential_id) VALUES ` + sb.String() + ` ON CONFLICT(rrd_id) WHERE rrd_id IS NOT NULL DO UPDATE SET rr_dt=EXCLUDED.rr_dt,order_dt=EXCLUDED.order_dt,supplier_oper_name=EXCLUDED.supplier_oper_name,doc_type_name=EXCLUDED.doc_type_name,quantity=EXCLUDED.quantity,retail_price=EXCLUDED.retail_price,retail_amount=EXCLUDED.retail_amount,retail_price_withdisc_rub=EXCLUDED.retail_price_withdisc_rub,ppvz_for_pay=EXCLUDED.ppvz_for_pay,ppvz_reward=EXCLUDED.ppvz_reward,ppvz_sales_commission=EXCLUDED.ppvz_sales_commission,ppvz_vw=EXCLUDED.ppvz_vw,ppvz_vw_nds=EXCLUDED.ppvz_vw_nds,acquiring_fee=EXCLUDED.acquiring_fee,delivery_rub=EXCLUDED.delivery_rub,delivery_amount=EXCLUDED.delivery_amount,return_amount=EXCLUDED.return_amount,penalty=EXCLUDED.penalty,additional_payment=EXCLUDED.additional_payment,deduction=EXCLUDED.deduction,storage_fee=EXCLUDED.storage_fee,acceptance=EXCLUDED.acceptance,rebill_logistic_cost=EXCLUDED.rebill_logistic_cost,updated_at=NOW()`
 	_, err := p.db.Exec(ctx, q, args...)
 	if err != nil {
 		return 0, err
@@ -191,3 +184,66 @@ func nz(n int64) interface{} {
 	}
 	return n
 }
+
+// SyncSalesWithOptions — вариант SyncSales, учитывающий ForceFull (отключает инкрементальное сужение окна).
+// Сам интервал [dateFrom, dateTo] уже приходит подготовленным из engine.
+func (p *Provider) SyncSalesWithOptions(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time, opts *sync.SyncOptions) (int, error) {
+	client := NewClient(apiKey)
+
+	if opts == nil || !opts.ForceFull {
+		var lastSaleDate *time.Time
+		err := p.db.QueryRow(ctx, "SELECT MAX(sale_dt) FROM wb_sales WHERE credential_id = $1", cred.ID).Scan(&lastSaleDate)
+		if err == nil && lastSaleDate != nil {
+			incrementalFrom := lastSaleDate.AddDate(0, 0, -3)
+			if incrementalFrom.After(dateFrom) {
+				dateFrom = incrementalFrom
+				log.Printf("[wb] Incremental sync from %s (last sale: %s)", dateFrom.Format("2006-01-02"), lastSaleDate.Format("2006-01-02"))
+			}
+		} else {
+			log.Printf("[wb] Full sync (no previous data for credential %d)", cred.ID)
+		}
+	} else {
+		log.Printf("[wb] ForceFull=true, skipping incremental narrowing")
+	}
+
+	log.Printf("[wb] Fetching sales: %s to %s", dateFrom.Format("2006-01-02"), dateTo.Format("2006-01-02"))
+	items, err := client.GetReportDetailByWeeks(dateFrom, dateTo)
+	if err != nil {
+		return 0, fmt.Errorf("fetch: %w", err)
+	}
+	if len(items) == 0 {
+		log.Printf("[wb] No items from API")
+		return 0, nil
+	}
+	log.Printf("[wb] Got %d items from API", len(items))
+
+	seen := make(map[int64]bool)
+	unique := make([]ReportDetailItem, 0, len(items))
+	for _, it := range items {
+		if it.RrdID == 0 {
+			continue
+		}
+		if !seen[it.RrdID] {
+			seen[it.RrdID] = true
+			unique = append(unique, it)
+		}
+	}
+	log.Printf("[wb] After dedup: %d unique items", len(unique))
+
+	processed := 0
+	for i := 0; i < len(unique); i += 500 {
+		end := i + 500
+		if end > len(unique) {
+			end = len(unique)
+		}
+		n, err := p.insertWbSalesBatch(ctx, unique[i:end], cred.ID)
+		if err != nil {
+			log.Printf("[wb] batch error: %v", err)
+			continue
+		}
+		processed += n
+	}
+	log.Printf("[wb] Processed %d into wb_sales", processed)
+	return processed, nil
+}
+

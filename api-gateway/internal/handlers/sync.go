@@ -277,9 +277,31 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 	var req struct {
 		Marketplace  string `json:"marketplace"`
 		CredentialID int    `json:"credential_id"`
+		DateFrom     string `json:"date_from,omitempty"`
+		DateTo       string `json:"date_to,omitempty"`
+		ForceFull    bool   `json:"force_full,omitempty"`
 	}
-	c.ShouldBindJSON(&req)
-	if req.Marketplace == "" { req.Marketplace = c.Param("marketplace") }
+	_ = c.ShouldBindJSON(&req)
+	if req.Marketplace == "" {
+		req.Marketplace = c.Param("marketplace")
+	}
+
+	if req.DateFrom != "" || req.DateTo != "" {
+		from, errFrom := time.Parse("2006-01-02", req.DateFrom)
+		to, errTo := time.Parse("2006-01-02", req.DateTo)
+		if errFrom != nil || errTo != nil {
+			c.JSON(400, gin.H{"error": "date_from/date_to must be YYYY-MM-DD"})
+			return
+		}
+		if from.After(to) {
+			c.JSON(400, gin.H{"error": "date_from must be <= date_to"})
+			return
+		}
+		if to.Sub(from) > 120*24*time.Hour {
+			c.JSON(400, gin.H{"error": "period must be <= 120 days"})
+			return
+		}
+	}
 
 	etlURL := os.Getenv("ETL_SERVICE_URL")
 	if etlURL == "" {
@@ -287,10 +309,20 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 	}
 	etlSecret := os.Getenv("ETL_SECRET")
 
-	body, _ := json.Marshal(map[string]interface{}{
+	payload := map[string]interface{}{
 		"marketplace":   req.Marketplace,
 		"credential_id": req.CredentialID,
-	})
+	}
+	if req.DateFrom != "" {
+		payload["date_from"] = req.DateFrom
+	}
+	if req.DateTo != "" {
+		payload["date_to"] = req.DateTo
+	}
+	if req.ForceFull {
+		payload["force_full"] = true
+	}
+	body, _ := json.Marshal(payload)
 
 	httpReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", etlURL+"/api/trigger", bytes.NewReader(body))
 	if err != nil {
@@ -316,8 +348,9 @@ func (h *Handler) TriggerSync(c *gin.Context) {
 	}
 
 	userID, _ := c.Get("user_id")
+	auditDetails, _ := json.Marshal(payload)
 	h.auditLog(c.Request.Context(), userID, "sync_triggered", "sync", "0",
-		fmt.Sprintf(`{"marketplace":"%s","credential_id":%d}`, req.Marketplace, req.CredentialID), c.ClientIP())
+		string(auditDetails), c.ClientIP())
 
 	var result map[string]interface{}
 	json.Unmarshal(respBody, &result)

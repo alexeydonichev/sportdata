@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"sportdata-etl/internal/sync"
 )
@@ -38,6 +39,9 @@ func (h *Handler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 type TriggerRequest struct {
 	Marketplace  string `json:"marketplace"`
 	CredentialID int    `json:"credential_id"`
+	DateFrom     string `json:"date_from"`  // YYYY-MM-DD (optional)
+	DateTo       string `json:"date_to"`    // YYYY-MM-DD (optional)
+	ForceFull    bool   `json:"force_full"` // skip incremental narrowing
 }
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
@@ -57,20 +61,40 @@ func (h *Handler) trigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go func() {
+	opts := &sync.SyncOptions{ForceFull: req.ForceFull}
+	if req.DateFrom != "" {
+		if t, err := time.Parse("2006-01-02", req.DateFrom); err == nil {
+			opts.DateFrom = &t
+		} else {
+			http.Error(w, `{"error":"invalid date_from, expected YYYY-MM-DD"}`, http.StatusBadRequest)
+			return
+		}
+	}
+	if req.DateTo != "" {
+		if t, err := time.Parse("2006-01-02", req.DateTo); err == nil {
+			// включаем весь день до 23:59:59
+			t = t.Add(24*time.Hour - time.Second)
+			opts.DateTo = &t
+		} else {
+			http.Error(w, `{"error":"invalid date_to, expected YYYY-MM-DD"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	go func(opts *sync.SyncOptions) {
 		ctx := context.Background()
 		if req.CredentialID > 0 {
-			if err := h.engine.RunByCredentialID(ctx, req.CredentialID); err != nil {
+			if err := h.engine.RunByCredentialIDWithOpts(ctx, req.CredentialID, opts); err != nil {
 				log.Printf("[api] trigger cred #%d error: %v", req.CredentialID, err)
 			}
 		} else if req.Marketplace != "" {
-			if err := h.engine.RunBySlug(ctx, req.Marketplace); err != nil {
+			if err := h.engine.RunBySlugWithOpts(ctx, req.Marketplace, opts); err != nil {
 				log.Printf("[api] trigger %s error: %v", req.Marketplace, err)
 			}
 		} else {
 			h.engine.RunAll(ctx)
 		}
-	}()
+	}(opts)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "queued", "message": "sync triggered"})

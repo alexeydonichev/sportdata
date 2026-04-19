@@ -26,3 +26,16 @@ type ReportDetailProvider interface {
 	SyncReportDetail(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error)
 	SyncReturnsFromReport(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time) (int, error)
 }
+
+// SyncOptions — параметры ручного запуска (из API)
+type SyncOptions struct {
+	DateFrom  *time.Time
+	DateTo    *time.Time
+	ForceFull bool
+}
+
+// ProviderWithOptions — опциональный расширенный интерфейс.
+// Если провайдер реализует его, engine передаст опции внутрь.
+type ProviderWithOptions interface {
+	SyncSalesWithOptions(ctx context.Context, cred *models.Credential, apiKey string, dateFrom, dateTo time.Time, opts *SyncOptions) (int, error)
+}

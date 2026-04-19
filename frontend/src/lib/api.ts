@@ -85,11 +85,18 @@ class ApiClient {
 
   async login(email: string, password: string) {
     const data = await this.request<{ token: string; user: UserInfo }>("/api/v1/auth/login", {
-      method: "POST", body: JSON.stringify({ email, password }),
+      method: "POST",
+      body: JSON.stringify({ email, password }),
     });
+
+    const normalizedUser: UserInfo = {
+      ...data.user,
+      role: data.user.role === "admin" ? "owner" : data.user.role,
+    };
+
     this.setToken(data.token);
-    localStorage.setItem("yf_user", JSON.stringify(data.user));
-    return data;
+    localStorage.setItem("yf_user", JSON.stringify(normalizedUser));
+    return { ...data, user: normalizedUser };
   }
 
   dashboard(params: { period?: string; category?: string; marketplace?: string } = {}) {
@@ -110,8 +117,9 @@ class ApiClient {
 
   categories() { return this.request<Category[]>("/api/v1/products/categories"); }
 
-  products(params: { category?: string; marketplace?: string; search?: string; sort?: string; order?: string } = {}) {
+  products(params: { period?: string; category?: string; marketplace?: string; search?: string; sort?: string; order?: string } = {}) {
     const qs = new URLSearchParams();
+    if (params.period) qs.set("period", params.period);
     if (params.category) qs.set("category", params.category);
     if (params.marketplace) qs.set("marketplace", params.marketplace);
     if (params.search) qs.set("search", params.search);
@@ -130,7 +138,7 @@ class ApiClient {
     return this.request<SalesResponse>("/api/v1/sales?" + qs.toString());
   }
 
-  inventory(params: { category?: string; marketplace?: string } = {}) {
+  inventory(params: { category?: string; marketplace?: string; period?: string } = {}) {
     const qs = new URLSearchParams();
     if (params.category) qs.set("category", params.category);
     if (params.marketplace) qs.set("marketplace", params.marketplace);

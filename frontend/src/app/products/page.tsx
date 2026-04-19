@@ -5,6 +5,7 @@ import AppLayout from "@/components/layout/AppLayout";
 import CategoryFilter from "@/components/ui/CategoryFilter";
 import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
 import ExportButton from "@/components/ui/ExportButton";
+import PeriodSelector from "@/components/ui/PeriodSelector";
 import Spinner from "@/components/ui/Spinner";
 import ErrorState from "@/components/ui/ErrorState";
 import { api } from "@/lib/api";
@@ -18,6 +19,7 @@ type SortKey = "revenue" | "profit" | "quantity" | "name" | "price" | "margin" |
 
 export default function ProductsPage() {
   const router = useRouter();
+  const [period, setPeriod] = useState("90d");
   const [category, setCategory] = useState("all");
   const [marketplace, setMarketplace] = useState("all");
   const [searchInput, setSearchInput] = useState("");
@@ -27,8 +29,8 @@ export default function ProductsPage() {
   const search = useDebouncedValue(searchInput, 300);
 
   const { data: products = [], loading, error, refresh } = useApiQuery<Product[]>(
-    () => api.products({ category, marketplace, search, sort, order }),
-    [category, marketplace, search, sort, order]
+    () => api.products({ period, category, marketplace, search, sort, order }),
+    [period, category, marketplace, search, sort, order]
   );
 
   const list = products || [];
@@ -76,10 +78,20 @@ export default function ProductsPage() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Товары</h1>
           <p className="text-sm text-text-tertiary mt-0.5">
-            {list.length} товаров · Данные за 90 дней
+            {list.length} товаров · Данные за {
+              period === "today" ? "сегодня"
+              : period === "7d" ? "7 дней"
+              : period === "30d" ? "30 дней"
+              : period === "90d" ? "90 дней"
+              : period === "180d" ? "180 дней"
+              : "365 дней"
+            }
           </p>
         </div>
-        <ExportButton filename="products" headers={exportHeaders} getRows={getExportRows} />
+        <div className="flex items-center gap-3">
+          <PeriodSelector value={period} onChange={setPeriod} />
+          <ExportButton filename="products" headers={exportHeaders} getRows={getExportRows} />
+        </div>
       </div>
 
       <div className="grid grid-cols-4 gap-4 mb-6">

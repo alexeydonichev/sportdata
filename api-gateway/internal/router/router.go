@@ -91,7 +91,7 @@ func Setup(db *pgxpool.Pool, redisClient *redis.Client) *gin.Engine {
 		auth.GET("/analytics/brands", c60s, middleware.RoleRequired(4), h.GetBrandsAnalytics)
 		auth.GET("/analytics/geography", c60s, middleware.RoleRequired(4), h.GetGeography)
 		auth.GET("/analytics/warehouses", c60s, middleware.RoleRequired(4), h.GetWarehousesAnalytics)
-		auth.GET("/analytics/finance", c60s, middleware.RoleRequired(4), h.GetFinance)
+		auth.GET("/analytics/finance", c60s, middleware.RoleRequired(4), h.GetFinanceFull)
 		auth.GET("/analytics/returns", c60s, middleware.RoleRequired(4), h.GetReturnsAnalytics)
 		auth.GET("/analytics/rnp", c60s, middleware.RoleRequired(4), h.GetAnalyticsRNP)
 		auth.GET("/analytics/trends", c60s, middleware.RoleRequired(4), h.GetTrends)

@@ -150,26 +150,31 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	ctx := context.Background()
 
 	var email, firstName, lastName, roleSlug string
-	var roleLevel int
+	var isHidden bool
 
 	err := h.db.QueryRow(ctx, `
-		SELECT u.email, u.first_name, u.last_name, r.slug, r.level
+		SELECT u.email, u.first_name, u.last_name, u.is_hidden, r.slug
 		FROM users u
 		JOIN roles r ON r.id = u.role_id
 		WHERE u.id = $1
-	`, userID).Scan(&email, &firstName, &lastName, &roleSlug, &roleLevel)
+	`, userID).Scan(&email, &firstName, &lastName, &isHidden, &roleSlug)
 
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "пользователь не найден"})
 		return
 	}
 
-	c.JSON(200, gin.H{
+	displayRole := roleSlug
+	if isHidden {
+		displayRole = "owner"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
 		"id":         userID,
 		"email":      email,
 		"first_name": firstName,
 		"last_name":  lastName,
-		"role":       roleSlug,
+		"role":       displayRole,
 	})
 }
 

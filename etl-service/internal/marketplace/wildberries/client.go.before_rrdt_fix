@@ -1,0 +1,263 @@
+package wildberries
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"time"
+)
+
+const (
+	baseURLStats   = "https://statistics-api.wildberries.ru/api/v1/supplier"
+	baseURLStatsV5 = "https://statistics-api.wildberries.ru/api/v5/supplier"
+)
+
+type Client struct {
+	apiKey     string
+	httpClient *http.Client
+}
+
+func NewClient(apiKey string) *Client {
+	return &Client{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: 300 * time.Second},
+	}
+}
+
+func (c *Client) doRequest(method, url string, result interface{}) error {
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 {
+		return fmt.Errorf("rate limited (429)")
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		limit := len(body)
+		if limit > 200 {
+			limit = 200
+		}
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body[:limit]))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read body: %w", err)
+	}
+	return json.Unmarshal(body, result)
+}
+
+// ──────────────────────────────────────────
+// Sales API (basic) - v1
+// ──────────────────────────────────────────
+
+type SaleItem struct {
+	Date            string  `json:"date"`
+	SupplierArticle string  `json:"supplierArticle"`
+	Barcode         string  `json:"barcode"`
+	TotalPrice      float64 `json:"totalPrice"`
+	ForPay          float64 `json:"forPay"`
+	FinishedPrice   float64 `json:"finishedPrice"`
+	PriceWithDisc   float64 `json:"priceWithDisc"`
+	SaleID          string  `json:"saleID"`
+	IsReturn        bool    `json:"IsReturn"`
+	NmId            int64   `json:"nmId"`
+	Subject         string  `json:"subject"`
+	Category        string  `json:"category"`
+	Brand           string  `json:"brand"`
+}
+
+func (c *Client) GetSales(dateFrom time.Time) ([]SaleItem, error) {
+	url := fmt.Sprintf("%s/sales?dateFrom=%s", baseURLStats, dateFrom.Format("2006-01-02"))
+	var result []SaleItem
+	err := c.doRequest("GET", url, &result)
+	return result, err
+}
+
+// ──────────────────────────────────────────
+// Stocks API - v1
+// ──────────────────────────────────────────
+
+type StockItem struct {
+	SupplierArticle string `json:"supplierArticle"`
+	Barcode         string `json:"barcode"`
+	Quantity        int    `json:"quantity"`
+	WarehouseName   string `json:"warehouseName"`
+	NmId            int64  `json:"nmId"`
+}
+
+func (c *Client) GetStocks(dateFrom time.Time) ([]StockItem, error) {
+	url := fmt.Sprintf("%s/stocks?dateFrom=%s", baseURLStats, dateFrom.Format("2006-01-02"))
+	var result []StockItem
+	err := c.doRequest("GET", url, &result)
+	return result, err
+}
+
+// ──────────────────────────────────────────
+// Report Detail API v5 (с географией!)
+// Все поля как interface{} или string для гибкости
+// ──────────────────────────────────────────
+
+type ReportDetailItem struct {
+	RealizationReportID  int64       `json:"realizationreport_id"`
+	DateFrom             string      `json:"date_from"`
+	DateTo               string      `json:"date_to"`
+	CreateDt             string      `json:"create_dt"`
+	CurrencyName         string      `json:"currency_name"`
+	SupplierContractCode interface{} `json:"suppliercontract_code"`
+	RRDt                 string      `json:"rrd_dt"` // Строка!
+	GiID                 int64       `json:"gi_id"`
+	SubjectName          string      `json:"subject_name"`
+	NmId                 int64       `json:"nm_id"`
+	BrandName            string      `json:"brand_name"`
+	SAName               string      `json:"sa_name"`
+	TSName               string      `json:"ts_name"`
+	Barcode              string      `json:"barcode"`
+	DocTypeName          string      `json:"doc_type_name"`
+	Quantity             int         `json:"quantity"`
+	RetailPrice          float64     `json:"retail_price"`
+	RetailAmount         float64     `json:"retail_amount"`
+	SalePercent          int         `json:"sale_percent"`
+	CommissionPercent    float64     `json:"commission_percent"`
+	OfficeName           string      `json:"office_name"`
+	SupplierOperName     string      `json:"supplier_oper_name"`
+	OrderDt              string      `json:"order_dt"`
+	SaleDt               string      `json:"sale_dt"`
+	RrdID                int64       `json:"rrd_id"` // Курсор пагинации WB
+	ShkID                int64       `json:"shk_id"`
+	RetailPriceWithDisc  float64     `json:"retail_price_withdisc_rub"`
+	DeliveryAmount       int         `json:"delivery_amount"`
+	ReturnAmount         int         `json:"return_amount"`
+	DeliveryRub          float64     `json:"delivery_rub"`
+	GiBoxTypeName        string      `json:"gi_box_type_name"`
+	ProductDiscount      float64     `json:"product_discount_for_report"`
+	SupplierPromo        float64     `json:"supplier_promo"`
+	RID                  int64       `json:"rid"`
+	PPVZSppPrc           float64     `json:"ppvz_spp_prc"`
+	PPVZKVWPrc           float64     `json:"ppvz_kvw_prc"`
+	PPVZKVWPrcBase       float64     `json:"ppvz_kvw_prc_base"`
+	PPVZSalesCommission  float64     `json:"ppvz_sales_commission"`
+	PPVZForPay           float64     `json:"ppvz_for_pay"`
+	PPVZReward           float64     `json:"ppvz_reward"`
+	AcquiringFee         float64     `json:"acquiring_fee"`
+	AcquiringPercent     float64     `json:"acquiring_percent"`
+	AcquiringBank        string      `json:"acquiring_bank"`
+	PPVZVW               float64     `json:"ppvz_vw"`
+	PPVZVWNDS            float64     `json:"ppvz_vw_nds"`
+	PPVZOfficeID         int64       `json:"ppvz_office_id"`
+	PPVZOfficeName       string      `json:"ppvz_office_name"`
+	PPVZSupplierID       int64       `json:"ppvz_supplier_id"`
+	PPVZSupplierName     string      `json:"ppvz_supplier_name"`
+	PPVZINN              string      `json:"ppvz_inn"`
+	DeclarationNumber    string      `json:"declaration_number"`
+	BonusTypeName        string      `json:"bonus_type_name"`
+	StickCode            string      `json:"sticker_id"`
+	SiteCountry          string      `json:"site_country"`
+	Penalty              float64     `json:"penalty"`
+	AdditionalPayment    float64     `json:"additional_payment"`
+	RebillLogisticCost   float64     `json:"rebill_logistic_cost"`
+	RebillLogisticOrg    string      `json:"rebill_logistic_org"`
+	Kiz                  string      `json:"kiz"`
+	StorageFee           float64     `json:"storage_fee"`
+	Deduction            float64     `json:"deduction"`
+	Acceptance           float64     `json:"acceptance"`
+	SRId                 string      `json:"srid"`
+	ReportType           int         `json:"report_type"`
+
+	// Географические поля
+	OblastOkrugName string `json:"oblast_okrug_name"`
+	RegionName      string `json:"region_name"`
+	CountryName     string `json:"country_name"`
+}
+
+func (c *Client) GetReportDetail(dateFrom, dateTo time.Time, limit, rrdid int64) ([]ReportDetailItem, error) {
+	url := fmt.Sprintf(
+		"%s/reportDetailByPeriod?dateFrom=%s&dateTo=%s&limit=%d",
+		baseURLStatsV5,
+		dateFrom.Format("2006-01-02"),
+		dateTo.Format("2006-01-02"),
+		limit,
+	)
+	if rrdid > 0 {
+		url = fmt.Sprintf("%s&rrdid=%d", url, rrdid)
+	}
+
+	var result []ReportDetailItem
+	err := c.doRequest("GET", url, &result)
+	return result, err
+}
+
+// GetReportDetailAll получает все данные с пагинацией
+func (c *Client) GetReportDetailAll(dateFrom, dateTo time.Time) ([]ReportDetailItem, error) {
+	const pageSize int64 = 100000
+	var all []ReportDetailItem
+	var lastRRDID int64 = 0
+
+	for {
+		page, err := c.GetReportDetail(dateFrom, dateTo, pageSize, lastRRDID)
+		if err != nil {
+			return all, err
+		}
+
+		if len(page) == 0 {
+			break
+		}
+
+		all = append(all, page...)
+
+		// Используем RID для пагинации
+		lastRRDID = page[len(page)-1].RrdID
+
+		if int64(len(page)) < pageSize {
+			break
+		}
+
+		if len(all) > 1000000 {
+			break
+		}
+
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return all, nil
+}
+
+// GetReportDetailByWeeks разбивает большой период на недельные запросы
+func (c *Client) GetReportDetailByWeeks(dateFrom, dateTo time.Time) ([]ReportDetailItem, error) {
+	var all []ReportDetailItem
+
+	current := dateFrom
+	for current.Before(dateTo) {
+		weekEnd := current.AddDate(0, 0, 7)
+		if weekEnd.After(dateTo) {
+			weekEnd = dateTo
+		}
+
+		log.Printf("[wb] Fetching week %s to %s", current.Format("2006-01-02"), weekEnd.Format("2006-01-02"))
+
+		items, err := c.GetReportDetailAll(current, weekEnd)
+		if err != nil {
+			log.Printf("[wb] week %s-%s error: %v", current.Format("2006-01-02"), weekEnd.Format("2006-01-02"), err)
+		} else {
+			log.Printf("[wb] week %s-%s: got %d items", current.Format("2006-01-02"), weekEnd.Format("2006-01-02"), len(items))
+			all = append(all, items...)
+		}
+
+		current = weekEnd.AddDate(0, 0, 1)
+		time.Sleep(1 * time.Second)
+	}
+
+	return all, nil
+}

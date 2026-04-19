@@ -77,11 +77,44 @@ func (e *Engine) RunByCredentialID(ctx context.Context, credID int) error {
 	return nil
 }
 
+
+func (e *Engine) RunBySlugWithOpts(ctx context.Context, slug string, opts *SyncOptions) error {
+	creds, err := e.loadCredentials(ctx)
+	if err != nil {
+		return fmt.Errorf("load credentials: %w", err)
+	}
+	found := false
+	for i := range creds {
+		if creds[i].MarketplaceSlug == slug {
+			found = true
+			e.runCredentialWithOpts(ctx, &creds[i], opts)
+		}
+	}
+	if !found {
+		return fmt.Errorf("no active credentials for %s", slug)
+	}
+	return nil
+}
+
+func (e *Engine) RunByCredentialIDWithOpts(ctx context.Context, credID int, opts *SyncOptions) error {
+	cred, err := e.loadCredentialByID(ctx, credID)
+	if err != nil {
+		return fmt.Errorf("credential %d: %w", credID, err)
+	}
+	e.runCredentialWithOpts(ctx, cred, opts)
+	return nil
+}
+
 func (e *Engine) runCredential(ctx context.Context, cred *models.Credential) {
+	e.runCredentialWithOpts(ctx, cred, nil)
+}
+
+func (e *Engine) runCredentialWithOpts(ctx context.Context, cred *models.Credential, opts *SyncOptions) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if cred.LastSyncAt != nil && time.Since(*cred.LastSyncAt) < syncCooldown {
+	// Rate-limit только для авто-запусков (opts == nil)
+	if opts == nil && cred.LastSyncAt != nil && time.Since(*cred.LastSyncAt) < syncCooldown {
 		remaining := syncCooldown - time.Since(*cred.LastSyncAt)
 		log.Printf("[sync] %s (cred #%d) rate limited, retry in %v",
 			cred.MarketplaceSlug, cred.ID, remaining.Round(time.Second))
@@ -101,14 +134,25 @@ func (e *Engine) runCredential(ctx context.Context, cred *models.Credential) {
 		return
 	}
 
-	log.Printf("[sync] starting %s (cred #%d: %s)...",
-		cred.MarketplaceSlug, cred.ID, cred.Name)
+	log.Printf("[sync] starting %s (cred #%d: %s) opts=%+v",
+		cred.MarketplaceSlug, cred.ID, cred.Name, opts)
 
 	dateTo := time.Now()
-	dateFrom := dateTo.AddDate(0, 0, -30)
+	dateFrom := dateTo.AddDate(0, 0, -90)
+	if opts != nil {
+		if opts.DateFrom != nil {
+			dateFrom = *opts.DateFrom
+		}
+		if opts.DateTo != nil {
+			dateTo = *opts.DateTo
+		}
+	}
 
 	// Основная синхронизация продаж
 	e.runJob(ctx, cred, "sales", func(ctx context.Context) (int, error) {
+		if pwo, ok := provider.(ProviderWithOptions); ok {
+			return pwo.SyncSalesWithOptions(ctx, cred, apiKey, dateFrom, dateTo, opts)
+		}
 		if rp, ok := provider.(ReportProvider); ok {
 			return rp.SyncReport(ctx, cred, apiKey, dateFrom, dateTo)
 		}

@@ -3,6 +3,7 @@ import { useState, useMemo } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import CategoryFilter from "@/components/ui/CategoryFilter";
 import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
+import PeriodSelector from "@/components/ui/PeriodSelector";
 import ExportButton from "@/components/ui/ExportButton";
 import Spinner from "@/components/ui/Spinner";
 import ErrorState from "@/components/ui/ErrorState";
@@ -32,10 +33,11 @@ export default function InventoryPage() {
   const [category, setCategory] = useState("all");
   const [marketplace, setMarketplace] = useState("all");
   const [stockFilter, setStockFilter] = useState<StockStatus>("all");
+  const [period, setPeriod] = useState("30d");
 
   const { data, loading, error, refresh } = useApiQuery<InventoryResponse>(
-    () => api.inventory({ category, marketplace }),
-    [category, marketplace]
+    () => api.inventory({ category, marketplace, period }),
+    [category, marketplace, period]
   );
 
   const counts = useMemo(() => {
@@ -82,7 +84,10 @@ export default function InventoryPage() {
               : "Загрузка..."}
           </p>
         </div>
-        <ExportButton filename="inventory" headers={exportHeaders} getRows={getExportRows} />
+        <div className="flex items-center gap-3">
+          <ExportButton filename="inventory" headers={exportHeaders} getRows={getExportRows} />
+          <PeriodSelector value={period} onChange={setPeriod} />
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4 mb-6">

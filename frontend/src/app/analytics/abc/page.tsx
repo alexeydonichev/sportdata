@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
+import PeriodSelector from "@/components/ui/PeriodSelector";
 import { api } from "@/lib/api";
 import {
   BarChart3, Download, Search, ArrowUpDown, ArrowUp, ArrowDown,
@@ -50,7 +51,7 @@ export default function ABCAnalysisPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [filterGrade, setFilterGrade] = useState<"all"|"A"|"B"|"C">("all");
-  const [period, setPeriod] = useState("90");
+  const [period, setPeriod] = useState("90d");
   const [marketplace, setMarketplace] = useState("all");
   const [sortKey, setSortKey] = useState<SK>("revenue");
   const [sortDir, setSortDir] = useState<"asc"|"desc">("desc");
@@ -113,14 +114,10 @@ export default function ABCAnalysisPage() {
           <p className="text-sm text-text-secondary mt-1">{"Классификация товаров по вкладу в выручку"}</p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex bg-surface-1 border border-border-default rounded-lg p-0.5">
-            {PERIODS.map((p) => (
-              <button key={p.value} onClick={() => setPeriod(p.value)} className={"px-3 py-1.5 rounded-md text-xs font-medium transition-colors " + (period === p.value ? "bg-text-primary text-surface-0" : "text-text-secondary hover:text-text-primary")}>{p.label}</button>
-            ))}
-          </div>
           <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium bg-surface-1 border border-border-default text-text-primary hover:bg-surface-2 transition-colors">
             <Download className="h-3.5 w-3.5" />CSV
           </button>
+          <PeriodSelector value={period} onChange={setPeriod} />
         </div>
       </div>
 
@@ -231,7 +228,7 @@ export default function ABCAnalysisPage() {
 
         <div className="px-4 py-3 border-t border-border-subtle flex items-center justify-between text-[11px] text-text-tertiary">
           <span>{"Показано " + filtered.length + " из " + products.length + " товаров"}</span>
-          <span>{"Выручка за " + period + " дн.: " + cur(stats.total)}</span>
+          <span>{"Выручка: " + cur(stats.total)}</span>
         </div>
       </div>
     </AppLayout>

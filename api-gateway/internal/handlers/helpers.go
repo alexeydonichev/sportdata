@@ -38,6 +38,18 @@ func changePct(current, previous float64) float64 {
 
 func changeDiff(current, previous float64) float64 { return round2(current - previous) }
 
+// changePctPtr — как changePct, но при previous==0 возвращает nil
+// (в JSON -> null). Используется где "нет базы сравнения" надо показать
+// как "—", а не вводящие в заблуждение 100%.
+func changePctPtr(current, previous float64) *float64 {
+	if previous == 0 {
+		return nil
+	}
+	v := round2((current - previous) / previous * 100)
+	return &v
+}
+
+
 // pctChange — алиас для changePct (используется в returns.go)
 func pctChange(current, previous float64) float64 { return changePct(current, previous) }
 

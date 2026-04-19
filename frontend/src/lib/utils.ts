@@ -7,11 +7,11 @@ export function cn(...inputs: ClassValue[]) {
 export function formatMoney(value: number | null | undefined): string {
   const v = value ?? 0;
   if (v === 0) return "0 ₽";
-  if (Math.abs(v) >= 5000000) {
-    return (v / 5000000).toFixed(1).replace(".", ",") + " млн ₽";
+  if (Math.abs(v) >= 1_000_000) {
+    return (v / 1_000_000).toFixed(1).replace(".", ",") + " млн ₽";
   }
-  if (Math.abs(v) >= 5000) {
-    return (v / 5000).toFixed(1).replace(".", ",") + " тыс ₽";
+  if (Math.abs(v) >= 1_000) {
+    return (v / 1_000).toFixed(1).replace(".", ",") + " тыс ₽";
   }
   return v.toLocaleString("ru-RU") + " ₽";
 }

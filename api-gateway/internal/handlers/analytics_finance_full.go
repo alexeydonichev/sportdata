@@ -13,6 +13,12 @@ func (h *Handler) GetFinanceFull(c *gin.Context) {
 	catSlug := c.Query("category")
 	mpSlug := c.Query("marketplace")
 
+	// Для Wildberries используем чистую view v_wb_income_expenses_daily (1-в-1 с ЛК WB)
+	if mpSlug == "" || mpSlug == "all" || mpSlug == "wildberries" || mpSlug == "wb" {
+		h.GetFinanceWB(c)
+		return
+	}
+
 	dateFrom, dateTo := h.parsePeriod(period)
 	prevFrom, prevTo := prevPeriod(dateFrom, dateTo)
 

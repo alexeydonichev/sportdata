@@ -117,7 +117,7 @@ type ReportDetailItem struct {
 	CreateDt             string      `json:"create_dt"`
 	CurrencyName         string      `json:"currency_name"`
 	SupplierContractCode interface{} `json:"suppliercontract_code"`
-	RRDt                 string      `json:"rrd_dt"` // Строка!
+	RRDt                 string      `json:"rr_dt"` // Строка!
 	GiID                 int64       `json:"gi_id"`
 	SubjectName          string      `json:"subject_name"`
 	NmId                 int64       `json:"nm_id"`
@@ -135,7 +135,7 @@ type ReportDetailItem struct {
 	SupplierOperName     string      `json:"supplier_oper_name"`
 	OrderDt              string      `json:"order_dt"`
 	SaleDt               string      `json:"sale_dt"`
-	RRDtID               int64       `json:"rr_dt_id"` // Может быть отдельное поле
+	RrdID                int64       `json:"rrd_id"` // Курсор пагинации WB
 	ShkID                int64       `json:"shk_id"`
 	RetailPriceWithDisc  float64     `json:"retail_price_withdisc_rub"`
 	DeliveryAmount       int         `json:"delivery_amount"`
@@ -218,7 +218,7 @@ func (c *Client) GetReportDetailAll(dateFrom, dateTo time.Time) ([]ReportDetailI
 		all = append(all, page...)
 
 		// Используем RID для пагинации
-		lastRRDID = page[len(page)-1].RID
+		lastRRDID = page[len(page)-1].RrdID
 
 		if int64(len(page)) < pageSize {
 			break

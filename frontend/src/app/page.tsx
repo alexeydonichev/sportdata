@@ -18,7 +18,7 @@ import { formatMoney, formatNumber, formatPercent } from "@/lib/utils";
 import { RefreshCw } from "lucide-react";
 
 export default function DashboardPage() {
-  const [period, setPeriod] = useState("7d");
+  const [period, setPeriod] = useState("30d");
   const [category, setCategory] = useState("");
   const [marketplace, setMarketplace] = useState("all");
 
