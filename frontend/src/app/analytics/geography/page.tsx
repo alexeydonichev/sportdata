@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import AppLayout from "@/components/layout/AppLayout";
 import PeriodSelector from "@/components/ui/PeriodSelector";
+import ThemeToggle from "@/components/ui/ThemeToggle";
 import CategoryFilter from "@/components/ui/CategoryFilter";
 import MarketplaceFilter from "@/components/ui/MarketplaceFilter";
 import MetricCard from "@/components/ui/MetricCard";
@@ -50,6 +51,7 @@ export default function GeographyPage() {
         </div>
         <div className="flex items-center gap-3">
           <PeriodSelector value={period} onChange={setPeriod} />
+          <ThemeToggle />
         </div>
       </div>
 
