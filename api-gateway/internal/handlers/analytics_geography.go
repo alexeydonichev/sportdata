@@ -47,7 +47,7 @@ func (h *Handler) GetGeography(c *gin.Context) {
 	`, catF, mpF)
 
 	cRows, _ := h.db.Query(ctx, cq, params...)
-	var byCountry []gin.H
+	byCountry := []gin.H{}
 	var totalRev float64
 	if cRows != nil {
 		defer cRows.Close()
@@ -63,11 +63,11 @@ func (h *Handler) GetGeography(c *gin.Context) {
 				rr = round2(float64(returns) / float64(qty+returns) * 100)
 			}
 			totalRev += rev
-			byCountry = append(byCountry, gin.H{"country": country, "revenue": round2(rev), "quantity": qty, "orders": orders, "returns": returns, "return_rate": rr})
+			byCountry = append(byCountry, gin.H{
+				"country": country, "revenue": round2(rev), "quantity": qty,
+				"orders": orders, "returns": returns, "return_rate": rr,
+			})
 		}
-	}
-	if byCountry == nil {
-		byCountry = []gin.H{}
 	}
 
 	wq := fmt.Sprintf(`
@@ -85,7 +85,7 @@ func (h *Handler) GetGeography(c *gin.Context) {
 	`, catF, mpF)
 
 	wRows, _ := h.db.Query(ctx, wq, params...)
-	var byWarehouse []gin.H
+	byWarehouse := []gin.H{}
 	if wRows != nil {
 		defer wRows.Close()
 		for wRows.Next() {
@@ -95,11 +95,41 @@ func (h *Handler) GetGeography(c *gin.Context) {
 			if err := wRows.Scan(&wh, &rev, &qty, &orders, &returns); err != nil {
 				continue
 			}
-			byWarehouse = append(byWarehouse, gin.H{"warehouse": wh, "revenue": round2(rev), "quantity": qty, "orders": orders, "returns": returns})
+			byWarehouse = append(byWarehouse, gin.H{
+				"warehouse": wh, "revenue": round2(rev), "quantity": qty,
+				"orders": orders, "returns": returns,
+			})
 		}
 	}
-	if byWarehouse == nil {
-		byWarehouse = []gin.H{}
+
+	byPvz := []gin.H{}
+	pq := fmt.Sprintf(`
+		SELECT COALESCE(s.office_name_2,'Unknown'),
+			COALESCE(SUM(CASE WHEN s.quantity>0 THEN s.revenue ELSE 0 END),0)::float8,
+			COALESCE(SUM(CASE WHEN s.quantity>0 THEN s.quantity ELSE 0 END),0)::int
+		FROM sales s
+		JOIN marketplaces mp ON mp.id=s.marketplace_id
+		JOIN products p ON p.id=s.product_id
+		LEFT JOIN categories c ON c.id=p.category_id
+		WHERE s.sale_date>=CURRENT_DATE-$1::int %s %s
+		GROUP BY s.office_name_2
+		HAVING COALESCE(s.office_name_2,'') <> ''
+		ORDER BY SUM(CASE WHEN s.quantity>0 THEN s.revenue ELSE 0 END) DESC
+		LIMIT 100
+	`, catF, mpF)
+
+	pRows, perr := h.db.Query(ctx, pq, params...)
+	if perr == nil && pRows != nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var pvz string
+			var rev float64
+			var qty int
+			if err := pRows.Scan(&pvz, &rev, &qty); err != nil {
+				continue
+			}
+			byPvz = append(byPvz, gin.H{"pvz": pvz, "revenue": round2(rev), "quantity": qty})
+		}
 	}
 
 	countries := 0
@@ -116,21 +146,29 @@ func (h *Handler) GetGeography(c *gin.Context) {
 	}
 	topCountry := "-"
 	if len(byCountry) > 0 {
-		topCountry = byCountry[0]["country"].(string)
+		if v, ok := byCountry[0]["country"].(string); ok {
+			topCountry = v
+		}
 	}
 	topWh := "-"
 	if len(byWarehouse) > 0 {
-		topWh = byWarehouse[0]["warehouse"].(string)
+		if v, ok := byWarehouse[0]["warehouse"].(string); ok {
+			topWh = v
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"period":       period,
 		"by_country":   byCountry,
 		"by_warehouse": byWarehouse,
+		"by_pvz":       byPvz,
 		"summary": gin.H{
-			"countries": countries, "warehouses": warehouses,
+			"countries":     countries,
+			"warehouses":    warehouses,
+			"pvz_count":     len(byPvz),
 			"total_revenue": round2(totalRev),
-			"top_country": topCountry, "top_warehouse": topWh,
+			"top_country":   topCountry,
+			"top_warehouse": topWh,
 		},
 	})
 }
